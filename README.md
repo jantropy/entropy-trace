@@ -113,3 +113,11 @@ following it further. This is the actual trace: sink -> `ngu.random.bytes` ->
 time. Every hop that can't be followed comes back an explicit UNKNOWN with a
 reason, never a plausible-looking guess at what happens next.
 
+**8. Policy:** _given where a chain ended up, does that pass?_  
+`analysis/policy.py`. A plain lookup table: (mode, terminal category) -> PASS,
+WARN, or FAIL. Nothing here re-derives a verdict from a category by hand
+anywhere else in the project - SARIF, the HTML report, CI's exit code, and the
+web UI all read the one `policy` object this module builds. A PASS only means
+a sink resolved, under this mode, to a source class the policy accepts - never
+that the resulting keys are actually safe.
+
