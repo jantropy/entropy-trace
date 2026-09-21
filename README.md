@@ -103,6 +103,12 @@ function it calls, by recognising the same four struct shapes MicroPython's
 build always produces. Anything outside those four shapes comes back an
 explicit UNKNOWN, never a guess.
 
+`adapters/` holds a second, different kind of adapter too: `coldcard.py` does
+nothing about Python or C at all - it just symlinks board directories into
+place and supplies the make variables Coldcard's build always passes, so the
+generic `make -n` backend from layer 1 can run against Coldcard's checkout
+without any of that being layer 1's problem.
+
 **7. The backward slice:** _tying it all together - walk from the sink until you
 hit something classifiable._  
 `analysis/slice.py`. Starts at a sink, and for each call it makes, decides
@@ -145,4 +151,11 @@ entropy-critical sink, checked against the official SARIF schema rather than a
 hand-guessed shape. Sysroot provenance (was this analysed against a real target,
 or the host's own headers?) lives at the run level, not attached to any one
 result - it's context about how the analysis ran, not a finding of its own.
+
+`emit/report.py` does the same job for a person instead of a CI system: one
+self-contained HTML file, no CDN, no external fonts, nothing loaded over the
+network - it has to open correctly straight off disk. A hop that couldn't be
+classified renders as its own hollow, dashed state, never red and never the
+same colour as a real failure, because uncertainty isn't a failure and must
+never be drawn like one.
 
