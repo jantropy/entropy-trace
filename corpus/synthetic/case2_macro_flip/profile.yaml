@@ -1,0 +1,11 @@
+# Synthetic mutation corpus, case 2: a board macro flipped so a single
+# file's #if selects a different implementation (spike/PHASE_D.md, D1).
+sink:
+  name: read_entropy
+  category: SEED_GENERATION
+  language: c
+  file: rng_select.c
+  entry_symbol: read_entropy
+expected:
+  vulnerable: NON_CRYPTO_PRNG
+  patched: OS_CSPRNG

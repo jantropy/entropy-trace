@@ -1,0 +1,11 @@
+label: "case3_symbol_moved vulnerable"
+repo_root: .
+build:
+  backend: make
+target_yaml: null
+sinks:
+  - name: generate_seed_bytes
+    category: SEED_GENERATION
+    language: c
+    file: main.c
+    entry_symbol: generate_seed_bytes

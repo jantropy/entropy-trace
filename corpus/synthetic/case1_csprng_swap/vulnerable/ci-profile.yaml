@@ -1,0 +1,14 @@
+# E2 (spike/PHASE_E.md): profile for entropytrace.cli.run_profile against
+# this synthetic case's vulnerable variant. repo_root is this file's own
+# directory (the Makefile + gen_key.c live right here).
+label: "case1_csprng_swap vulnerable"
+repo_root: .
+build:
+  backend: make
+target_yaml: null
+sinks:
+  - name: generate_key_material
+    category: SEED_GENERATION
+    language: c
+    file: gen_key.c
+    entry_symbol: generate_key_material

@@ -1,0 +1,11 @@
+label: "case4_deterministic_nonce"
+repo_root: .
+build:
+  backend: make
+target_yaml: null
+sinks:
+  - name: rfc6979_nonce
+    category: DETERMINISTIC_NONCE
+    language: c
+    file: nonce.c
+    entry_symbol: rfc6979_nonce

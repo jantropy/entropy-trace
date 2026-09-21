@@ -1,0 +1,11 @@
+label: "case2_macro_flip patched"
+repo_root: .
+build:
+  backend: make
+target_yaml: null
+sinks:
+  - name: read_entropy
+    category: SEED_GENERATION
+    language: c
+    file: rng_select.c
+    entry_symbol: read_entropy

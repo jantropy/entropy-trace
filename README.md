@@ -121,3 +121,28 @@ web UI all read the one `policy` object this module builds. A PASS only means
 a sink resolved, under this mode, to a source class the policy accepts - never
 that the resulting keys are actually safe.
 
+**9. The profile:** _what does "analyse this project" actually mean, in one file?_  
+`profiles.py`. A profile YAML says where the checkout lives, how to get its build
+set (plain `make -n`, `compile_commands.json`, or a named adapter), which target
+macros and sysroot apply, and which sinks to look for beyond the shared catalogue.
+Loading one never silently fills in a missing field - a profile that's missing
+something required fails with the exact field name, not a guess.
+
+**10. The entrypoint:** _run everything above as one command._  
+`cli.py`. Loads a profile, runs every layer above it in order, and writes out
+`findings.json` plus a SARIF file - the same two artifacts a GitHub Action would
+attach to a pull request. This is the actual tool: `python -m entropytrace.cli
+--profile <profile.yaml> --output findings.json` runs the whole pipeline end to
+end and exits non-zero on a real finding, tested here against four small,
+self-contained corpus cases under `corpus/synthetic/` (a swapped CSPRNG, a
+flipped build macro, a symbol resolving to a different file depending on the
+build, and a deterministic nonce that must never be flagged at all).
+
+**11. Output:** _turn a finding into something a human or a CI system can act on._  
+`emit/sarif.py`. A pure function of `findings.json` - reads it, writes SARIF
+2.1.0, the format GitHub code scanning understands natively. One result per
+entropy-critical sink, checked against the official SARIF schema rather than a
+hand-guessed shape. Sysroot provenance (was this analysed against a real target,
+or the host's own headers?) lives at the run level, not attached to any one
+result - it's context about how the analysis ran, not a finding of its own.
+

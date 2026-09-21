@@ -1,0 +1,13 @@
+# Synthetic mutation corpus, case 3: the same extern call resolving to a
+# different translation unit depending on which files the build compiles
+# alongside it -- the Coldcard rng_get() shape, minimized (spike/PHASE_D.md,
+# D1; spike/PHASE_B.md for the real case this mirrors).
+sink:
+  name: generate_seed_bytes
+  category: SEED_GENERATION
+  language: c
+  file: main.c
+  entry_symbol: generate_seed_bytes
+expected:
+  vulnerable: NON_CRYPTO_PRNG
+  patched: OS_CSPRNG

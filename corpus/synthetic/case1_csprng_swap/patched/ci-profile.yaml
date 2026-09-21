@@ -1,0 +1,11 @@
+label: "case1_csprng_swap patched"
+repo_root: .
+build:
+  backend: make
+target_yaml: null
+sinks:
+  - name: generate_key_material
+    category: SEED_GENERATION
+    language: c
+    file: gen_key.c
+    entry_symbol: generate_key_material
