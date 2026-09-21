@@ -1,0 +1,76 @@
+# Entropy Trace corpus stub — Libbitcoin Explorer `bx seed` weak-entropy incident
+# ("Milk Sad", CVE-2023-39910 in public reporting -- CVE number NOT independently
+# verified in this session, see confidence note below).
+# Verified by direct inspection of a full clone of
+# https://github.com/libbitcoin/libbitcoin-explorer.
+
+case: libbitcoin-explorer-bx-seed-weak-entropy
+repos:
+  - name: libbitcoin-explorer
+    url: https://github.com/libbitcoin/libbitcoin-explorer
+  - name: libbitcoin-system
+    url: https://github.com/libbitcoin/libbitcoin-system
+    note: >
+      NOT cloned in this session. pseudo_random_fill(), the actual entropy
+      primitive `bx seed` calls, is defined here, not in libbitcoin-explorer.
+      Its internals (reportedly std::mt19937 seeded from a low-entropy,
+      time-derived seed) are NOT FOUND / NOT verified by this spike -- only
+      the call site in libbitcoin-explorer was read directly.
+
+vulnerable:
+  # Last commit before the command was first functionally disabled.
+  sha: "a856bd68777ef8682ea303713618a5ca5bc91a42^"
+  note_on_sha: >
+    Expressed as "the parent of a856bd6" because that commit itself is the
+    first to gut the implementation; the vulnerable source (quoted below)
+    is what `git show a856bd6^:src/commands/seed.cpp` returns. Any commit
+    reachable to that parent has the same vulnerable code path.
+  file: "src/commands/seed.cpp"
+  code: |
+    const auto new_seed = [](size_t bit_length)
+    {
+        const auto fill_seed_size = bit_length / byte_bits;
+        data_chunk seed(fill_seed_size);
+        pseudo_random_fill(seed);
+        return seed;
+    };
+    // Use of prng limits testability.
+    const auto seed = new_seed(bit_length);
+    output << base16(seed) << std::endl;
+
+patched:
+  # Two relevant commits -- see note_on_dates for why only the second is
+  # plausibly the actual security response.
+  first_functional_removal:
+    sha: "a856bd68777ef8682ea303713618a5ca5bc91a42"
+    date: "2021-05-02 16:37:27 -0700"
+    message: "Obsolete commands: base58check-*, seed, wrap-* (to be replaced)."
+    note: >
+      Reduces seed::invoke() to `error << BX_SEED_OBSOLETE; return failure`.
+      Bundled with unrelated commands (base58check-*, wrap-*) under a generic
+      "to be replaced" rationale -- predates the public 2023 disclosure by
+      over two years, so this does NOT look like a direct response to a
+      reported entropy weakness; more likely general command deprecation
+      that happened to remove the vulnerable code path as a side effect.
+  formal_obsoletion:
+    sha: "aa46ce63ceced3d8e9e7a2992f404b4b0d494950"
+    date: "2023-08-12 00:00:31 +0200"
+    message: "Obsolete bx seed command"
+    issue: "https://github.com/libbitcoin/libbitcoin-explorer/issues/728"
+    note: >
+      Date lines up with the public "Milk Sad" disclosure window (Aug 2023).
+      Marks the command `obsolete() { return true; }`, removes the
+      bit_length CLI option and BX_SEED_BIT_LENGTH_UNSUPPORTED string
+      entirely so the already-dead code path can't be reached even via a
+      legacy config file. This is the commit most likely to be the actual
+      security-tracked fix; the 2021 commit is NOT FOUND to be
+      security-motivated (no issue reference, no CVE mention in the message).
+
+confidence: medium
+confidence_note: >
+  Call site and both obsoletion commits verified directly against the repo.
+  NOT verified in this session: (1) pseudo_random_fill()'s actual algorithm
+  and seed source -- lives in libbitcoin-system, not cloned; (2) the
+  CVE-2023-39910 identifier -- not looked up against an authoritative CVE
+  database in this session, included here only as the commonly-cited public
+  label for this incident.

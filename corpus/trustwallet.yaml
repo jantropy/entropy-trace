@@ -1,0 +1,38 @@
+# Trust Wallet Core corpus sink catalogue.
+#
+# The BIP-32 "Bitcoin seed" structural anchor does not find a sink here -
+# confirmed empirically, not assumed. trezor-crypto (vendored by Trust
+# Wallet Core) stores "Bitcoin seed" as a .bip32_name struct field in a
+# curve-parameters table, and the actual HMAC call uses the three-call
+# hmac_sha512_Init/_Update/_Final streaming API with an indirect field
+# read through a pointer, not a literal string argument to a single
+# hmac_sha512(...) call the way libngu's hdnode.c uses it. Both the
+# function-name assumption and the literal-at-the-call-site assumption
+# fail here - a genuine, confirmed non-generalisation of the anchor as
+# currently implemented, not a bug in this run.
+#
+# So this case is traced via a named catalogue entry instead, pointing
+# directly at the two functions identified as the actual defect:
+# wasm/src/Random.cpp's random32()/random_buffer().
+
+- name: random32
+  category: SEED_GENERATION
+  language: c
+  file: wasm/src/Random.cpp
+  entry_symbol: random32
+  note: >
+    extern "C" uint32_t random32(void) -- confirmed present, under this
+    exact name and signature, at both efca5eeef5ab79df88914c7be2c287317cd10234
+    (3.1.0, vulnerable) and d3c2eee16b154cbb69e8959b01e5e71fbabb1212
+    (3.1.1, patched; body completely rewritten).
+
+- name: random_buffer
+  category: SEED_GENERATION
+  language: c
+  file: wasm/src/Random.cpp
+  entry_symbol: random_buffer
+  note: >
+    extern "C" void random_buffer(uint8_t*, size_t) -- the actual entropy
+    source for wallet seed/key generation in the wasm build (random32 is
+    a thin single-word wrapper around the same construction). Same
+    presence note as random32 above.

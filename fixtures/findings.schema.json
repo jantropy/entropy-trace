@@ -1,0 +1,250 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://entropy-trace/schemas/findings-v1.json",
+  "title": "Entropy Trace findings.json",
+  "description": "Canonical output schema for one sink's computed entropy-provenance chain under one build profile. This schema is frozen from this point on: report.py, sarif.py, the web UI, and CI all read this file and nothing else. A backward-incompatible change bumps schema_version's major component and adds a new $id.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "build_profile",
+    "sink",
+    "config_values",
+    "chain",
+    "status",
+    "confidence",
+    "unknown_count",
+    "coverage",
+    "policy"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "Semver of this schema, not of the tool. Downstream consumers should refuse to read a major version they don't recognise.",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "label": {
+      "type": "string",
+      "description": "Human-readable label for this specific run (e.g. which corpus case / commit this is)."
+    },
+    "build_profile": {
+      "type": "object",
+      "description": "The declared build configuration this chain was computed under.",
+      "required": ["repo", "commit", "board", "sysroot"],
+      "properties": {
+        "repo": {"type": "string"},
+        "commit": {"type": "string"},
+        "board": {"type": "string"},
+        "make_vars": {
+          "type": "object",
+          "additionalProperties": {"type": "string"}
+        },
+        "target_macros": {
+          "type": "string",
+          "description": "Repo-relative path to the data/targets/*.yaml this analysis captured its predefined-macro environment from. Absent for a profile with no ARM target (e.g. Trust Wallet Core's host-compiled CMake build, target_yaml=None)."
+        },
+        "sysroot": {
+          "type": "object",
+          "description": "Whether a real target sysroot (compiler built-ins + newlib) was used for this analysis, or system headers resolved against the analysis host instead. `used: false` is not an error state -- it's the honest, structural fact that must never be silent, since a project with no target sysroot configured still analyses correctly, just with a real (documented) class of risk.",
+          "required": ["used"],
+          "properties": {
+            "used": {"type": "boolean"},
+            "cache_key": {"type": "string", "description": "The target YAML's own sysroot.cache_key -- the recipe, not the resolved content."},
+            "resolved_packages": {
+              "type": "object",
+              "description": "Package name -> exact resolved version string (e.g. \"newlib-arm-none-eabi-4.2.0.20211231-r1\"), read from the running container at fetch time. Recorded because the source repository is rolling, so the recipe alone doesn't identify what was actually fetched.",
+              "additionalProperties": {"type": "string"}
+            }
+          }
+        }
+      }
+    },
+    "sink": {
+      "type": "object",
+      "description": "The entropy-critical sink this chain starts from, with its taxonomy classification.",
+      "required": ["name", "language", "file", "line", "category", "entropy_critical", "mechanism"],
+      "properties": {
+        "name": {"type": "string"},
+        "language": {"type": "string", "enum": ["python", "c"]},
+        "file": {"type": "string"},
+        "line": {"type": "integer", "minimum": 1},
+        "category": {
+          "type": "string",
+          "enum": [
+            "SEED_GENERATION",
+            "PRIVATE_KEY_GENERATION",
+            "SECURITY_SALT",
+            "DETERMINISTIC_NONCE",
+            "CHILD_KEY_DERIVATION",
+            "DERIVED_ENTROPY",
+            "ADDRESS_OR_TXID_GENERATION"
+          ]
+        },
+        "entropy_critical": {
+          "type": "boolean",
+          "description": "Fixed per category, never inferred per-instance. A finding with entropy_critical=false must never be surfaced as a failure -- RFC 6979/BIP-340 nonces, BIP-32 child derivation, BIP-85, and address/txid generation are correct constructions, not bugs."
+        },
+        "mechanism": {
+          "type": "string",
+          "enum": ["catalogue", "structural_anchor"],
+          "description": "How the sink was located: a named data/sinks.yaml entry, or a structural anchor (e.g. the BIP-32 \"Bitcoin seed\" HMAC key literal)."
+        }
+      }
+    },
+    "config_values": {
+      "type": "array",
+      "description": "Build-configuration values (macros etc.) that were actually read from source and that determined which branch of the analysed code is live under this profile -- the whole reason this project preprocesses instead of reading source as text.",
+      "items": {
+        "type": "object",
+        "required": ["name", "value", "file", "line"],
+        "properties": {
+          "name": {"type": "string"},
+          "value": {"type": "string"},
+          "file": {"type": "string"},
+          "line": {"type": "integer", "minimum": 1}
+        }
+      }
+    },
+    "chain": {
+      "type": "array",
+      "description": "Every hop from the sink to the terminal, in walk order, each with file:line evidence. A chain that stops with status=UNKNOWN still reports every hop it successfully made.",
+      "items": {
+        "type": "object",
+        "required": ["index", "kind", "symbol", "file", "line"],
+        "properties": {
+          "index": {"type": "integer", "minimum": 0},
+          "kind": {
+            "type": "string",
+            "enum": ["python_sink", "ffi", "c_call"],
+            "description": "python_sink: the originating sink function. ffi: a Python-to-C boundary crossing. c_call: a plain C function call."
+          },
+          "symbol": {"type": "string"},
+          "file": {"type": ["string", "null"]},
+          "line": {"type": ["integer", "null"], "minimum": 1},
+          "detail": {"type": "string"},
+          "resolution_verdict": {
+            "type": ["string", "null"],
+            "enum": ["local", "RESOLVED", "AMBIGUOUS", "UNRESOLVED_IN_TREE", null],
+            "description": "Only meaningful for kind=c_call. 'local': the call target was defined in the same translation unit, no cross-TU resolution needed. 'RESOLVED': resolve.resolve() was invoked (an extern reference) and found exactly one definition across the build set -- a hop with a location attached, and the walk must continue through it, never treated as a pass on its own."
+          }
+        }
+      }
+    },
+    "terminal": {
+      "type": ["object", "null"],
+      "description": "The classified terminal, or null if status=UNKNOWN.",
+      "required": ["symbol", "category", "matched_entry", "match_kind"],
+      "properties": {
+        "symbol": {"type": "string"},
+        "category": {
+          "type": "string",
+          "enum": [
+            "HW_TRNG", "OS_CSPRNG", "LIB_CSPRNG", "USER_ENTROPY",
+            "NON_CRYPTO_PRNG", "CONSTANT", "TIME_SEEDED", "UNKNOWN"
+          ]
+        },
+        "matched_entry": {
+          "type": "string",
+          "description": "The data/sources.yaml entry's `symbol` field that matched."
+        },
+        "match_kind": {"type": "string", "enum": ["function_name", "body_contains"]}
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": ["CLASSIFIED", "UNKNOWN"],
+      "description": "UNKNOWN is never silently a pass -- policy.py decides PR-mode vs audit-mode handling of it; this schema only records the fact."
+    },
+    "unknown_reason": {
+      "type": ["string", "null"],
+      "description": "Required (non-null) when status=UNKNOWN: names exactly what was tried and why it didn't resolve, never left blank."
+    },
+    "confidence": {
+      "type": "string",
+      "enum": ["high", "medium", "low"]
+    },
+    "unknown_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of UNKNOWN hops/edges encountered while building this finding -- the honest metric worth leading benchmark reporting with."
+    },
+    "coverage": {
+      "type": "object",
+      "description": "Whole-tree sweep: every sink this project's two real sink-location mechanisms (the BIP-32 structural anchor, the data/sinks.yaml catalogue) find in the analysed build, each traced to a classified terminal or an honest UNKNOWN. This is the audit-tool number, not the single-chain one above -- it matters more than any individual `chain` result because it says how much of the tree was actually looked at, not just whether one named sink resolved.",
+      "required": [
+        "sinks_found",
+        "sinks_found_by_category",
+        "chains_closed",
+        "chains_unknown",
+        "percentage_resolved",
+        "chains"
+      ],
+      "properties": {
+        "sinks_found": {"type": "integer", "minimum": 0},
+        "sinks_found_by_category": {
+          "type": "object",
+          "additionalProperties": {"type": "integer", "minimum": 0}
+        },
+        "chains_closed": {"type": "integer", "minimum": 0},
+        "chains_unknown": {"type": "integer", "minimum": 0},
+        "percentage_resolved": {"type": "number", "minimum": 0, "maximum": 100},
+        "chains": {
+          "type": "array",
+          "description": "One entry per sink found, whether or not its chain closed.",
+          "items": {
+            "type": "object",
+            "required": ["sink_name", "sink_category", "entropy_critical", "mechanism", "file", "line", "status"],
+            "properties": {
+              "sink_name": {"type": "string"},
+              "sink_category": {"type": "string"},
+              "entropy_critical": {"type": "boolean"},
+              "mechanism": {"type": "string", "enum": ["catalogue", "structural_anchor"]},
+              "file": {"type": ["string", "null"]},
+              "line": {"type": ["integer", "null"]},
+              "status": {"type": "string", "enum": ["CLASSIFIED", "UNKNOWN"]},
+              "terminal_category": {"type": "string"},
+              "unknown_reason": {"type": "string"},
+              "broke_at_hop": {"type": "string"},
+              "chain": {
+                "type": "array",
+                "description": "Same hop-list shape as the top-level `chain` field, populated for every sink in this coverage sweep -- not just the headline sink -- so a per-sink SARIF codeFlow or UI chain view can be built for any of them. Empty for a sink whose trace never started (e.g. a structural-anchor sink whose entry point is a formal parameter, not a callable).",
+                "items": {"$ref": "#/properties/chain/items"}
+              }
+            }
+          }
+        }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "description": "(entropy_critical, terminal classification, mode) -> verdict, computed over every entropy_critical sink in `coverage.chains`. This is the pass/fail decision every other consumer (SARIF, the GitHub Action's exit code, the HTML report, the web UI) reads -- none of them re-derive a verdict from raw categories themselves. A PASS here means only that the sink resolved, under this policy mode, to a source class this policy accepts -- never that the resulting keys are secure or safe.",
+      "required": ["mode", "verdicts", "overall_verdict"],
+      "properties": {
+        "mode": {"type": "string", "enum": ["pr", "audit"]},
+        "verdicts": {
+          "type": "array",
+          "description": "One entry per entropy_critical sink in `coverage.chains` -- sinks with entropy_critical=false are never evaluated and do not appear here.",
+          "items": {
+            "type": "object",
+            "required": ["sink_name", "status", "verdict"],
+            "properties": {
+              "sink_name": {"type": "string"},
+              "status": {"type": "string", "enum": ["CLASSIFIED", "UNKNOWN"]},
+              "terminal_category": {"type": ["string", "null"]},
+              "verdict": {"type": "string", "enum": ["PASS", "WARN", "FAIL"]}
+            }
+          }
+        },
+        "overall_verdict": {
+          "type": "string",
+          "enum": ["PASS", "WARN", "FAIL"],
+          "description": "The worst (FAIL > WARN > PASS) verdict among `verdicts` -- what the GitHub Action's exit code is based on."
+        }
+      }
+    }
+  }
+}

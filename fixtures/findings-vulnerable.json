@@ -1,0 +1,213 @@
+{
+  "schema_version": "1.3.0",
+  "generated_at": "2026-09-14T10:01:40.633380+00:00",
+  "label": "vulnerable (tag 2026-07-01T1730-v5.5.1)",
+  "build_profile": {
+    "repo": "Coldcard/firmware",
+    "commit": "ae88593552403303a1973f1a927095b62cc059af",
+    "board": "COLDCARD_MK4",
+    "make_vars": {
+      "DEBUG_BUILD": "0",
+      "EXCLUDE_NGU_TESTS": "1"
+    },
+    "target_macros": "data/targets/arm-none-eabi-cortex-m4-gcc11.yaml",
+    "sysroot": {
+      "used": true,
+      "cache_key": "alpine-3.16.0-gcc-arm-none-eabi-11.2.0-r2-newlib-4.2.0.20211231-r1",
+      "resolved_packages": {
+        "gcc-arm-none-eabi": "gcc-arm-none-eabi-11.2.0-r2",
+        "newlib-arm-none-eabi": "newlib-arm-none-eabi-4.2.0.20211231-r1"
+      }
+    }
+  },
+  "sink": {
+    "name": "generate_seed",
+    "language": "python",
+    "file": "shared/seed.py",
+    "line": 602,
+    "category": "SEED_GENERATION",
+    "entropy_critical": true,
+    "mechanism": "catalogue"
+  },
+  "config_values": [
+    {
+      "name": "MICROPY_HW_ENABLE_RNG",
+      "value": "0",
+      "file": "stm32/COLDCARD_MK4/mpconfigboard.h",
+      "line": 78
+    }
+  ],
+  "chain": [
+    {
+      "index": 0,
+      "kind": "python_sink",
+      "symbol": "generate_seed",
+      "file": "shared/seed.py",
+      "line": 602,
+      "detail": "",
+      "resolution_verdict": null
+    },
+    {
+      "index": 1,
+      "kind": "ffi",
+      "symbol": "ngu.random.bytes",
+      "file": "shared/seed.py",
+      "line": 605,
+      "detail": "-> random_bytes",
+      "resolution_verdict": null
+    },
+    {
+      "index": 2,
+      "kind": "c_call",
+      "symbol": "random_bytes",
+      "file": "boards/COLDCARD_MK4/c-modules/libngu/random.c",
+      "line": 145,
+      "detail": "",
+      "resolution_verdict": null
+    },
+    {
+      "index": 3,
+      "kind": "c_call",
+      "symbol": "my_random_bytes",
+      "file": "boards/COLDCARD_MK4/c-modules/libngu/random.c",
+      "line": 68,
+      "detail": "local",
+      "resolution_verdict": "local"
+    },
+    {
+      "index": 4,
+      "kind": "c_call",
+      "symbol": "rng_get",
+      "file": "rng.c",
+      "line": 96,
+      "detail": "resolve()",
+      "resolution_verdict": "RESOLVED"
+    },
+    {
+      "index": 5,
+      "kind": "c_call",
+      "symbol": "pyb_rng_yasmarang",
+      "file": "rng.c",
+      "line": 74,
+      "detail": "local",
+      "resolution_verdict": "local"
+    }
+  ],
+  "terminal": {
+    "symbol": "pyb_rng_yasmarang",
+    "category": "NON_CRYPTO_PRNG",
+    "matched_entry": "pyb_rng_yasmarang",
+    "match_kind": "function_name"
+  },
+  "status": "CLASSIFIED",
+  "unknown_reason": null,
+  "confidence": "high",
+  "unknown_count": 0,
+  "coverage": {
+    "sinks_found": 2,
+    "sinks_found_by_category": {
+      "SEED_GENERATION": 2
+    },
+    "chains_closed": 1,
+    "chains_unknown": 1,
+    "percentage_resolved": 50.0,
+    "chains": [
+      {
+        "sink_name": "s_hdnode_from_master",
+        "sink_category": "SEED_GENERATION",
+        "entropy_critical": true,
+        "mechanism": "structural_anchor",
+        "file": "boards/COLDCARD_MK4/c-modules/libngu/hdnode.c",
+        "line": 297,
+        "status": "UNKNOWN",
+        "unknown_reason": "'master_secret_in' is a formal parameter of 's_hdnode_from_master', not a callable entry point -- tracing what flows into it requires backward interprocedural argument tracing across this function's call sites, which slice.py does not implement (see this function's docstring)",
+        "broke_at_hop": "master_secret_in",
+        "chain": []
+      },
+      {
+        "sink_name": "generate_seed",
+        "sink_category": "SEED_GENERATION",
+        "entropy_critical": true,
+        "mechanism": "catalogue",
+        "file": "shared/seed.py",
+        "line": 602,
+        "status": "CLASSIFIED",
+        "terminal_category": "NON_CRYPTO_PRNG",
+        "chain": [
+          {
+            "index": 0,
+            "kind": "python_sink",
+            "symbol": "generate_seed",
+            "file": "shared/seed.py",
+            "line": 602,
+            "detail": "",
+            "resolution_verdict": null
+          },
+          {
+            "index": 1,
+            "kind": "ffi",
+            "symbol": "ngu.random.bytes",
+            "file": "shared/seed.py",
+            "line": 605,
+            "detail": "-> random_bytes",
+            "resolution_verdict": null
+          },
+          {
+            "index": 2,
+            "kind": "c_call",
+            "symbol": "random_bytes",
+            "file": "boards/COLDCARD_MK4/c-modules/libngu/random.c",
+            "line": 145,
+            "detail": "",
+            "resolution_verdict": null
+          },
+          {
+            "index": 3,
+            "kind": "c_call",
+            "symbol": "my_random_bytes",
+            "file": "boards/COLDCARD_MK4/c-modules/libngu/random.c",
+            "line": 68,
+            "detail": "local",
+            "resolution_verdict": "local"
+          },
+          {
+            "index": 4,
+            "kind": "c_call",
+            "symbol": "rng_get",
+            "file": "rng.c",
+            "line": 96,
+            "detail": "resolve()",
+            "resolution_verdict": "RESOLVED"
+          },
+          {
+            "index": 5,
+            "kind": "c_call",
+            "symbol": "pyb_rng_yasmarang",
+            "file": "rng.c",
+            "line": 74,
+            "detail": "local",
+            "resolution_verdict": "local"
+          }
+        ]
+      }
+    ]
+  },
+  "policy": {
+    "mode": "pr",
+    "verdicts": [
+      {
+        "sink_name": "s_hdnode_from_master",
+        "status": "UNKNOWN",
+        "terminal_category": null,
+        "verdict": "WARN"
+      },
+      {
+        "sink_name": "generate_seed",
+        "status": "CLASSIFIED",
+        "terminal_category": "NON_CRYPTO_PRNG",
+        "verdict": "FAIL"
+      }
+    ],
+    "overall_verdict": "FAIL"
+  }
+}

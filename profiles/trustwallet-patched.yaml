@@ -1,0 +1,21 @@
+# Trust Wallet Core's patched tag (3.1.1), as a profile. Same shape as
+# trustwallet-vulnerable.yaml - only repo_root/label/commit differ.
+repo_root: /Users/satadel/scratch-entropy/twc-patched
+label: "patched (tag 3.1.1)"
+commit: "d3c2eee16b154cbb69e8959b01e5e71fbabb1212"
+repo: "trustwallet/wallet-core"
+
+board: "wasm (emscripten target, compile_commands.json via host-substituted CMake configure)"
+
+build:
+  backend: compile_commands
+  compile_commands: build-wasm-attempt/compile_commands.json
+  # Documentary only - never consumed by the compile_commands backend,
+  # recorded for provenance.
+  make_vars:
+    TW_UNIT_TESTS: "OFF"
+    TW_COMPILE_WASM: "ON"
+
+target_yaml: null
+run_bip32_anchor: false
+sinks_yaml: ../corpus/trustwallet.yaml

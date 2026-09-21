@@ -1,0 +1,32 @@
+# Coldcard's vulnerable tag, as a profile.
+#
+# The catalogue sink (generate_seed) isn't redeclared here - it's already
+# in data/sinks.yaml, which sinks_yaml defaults to, and profiles.py's
+# load_catalogue_for_profile picks it up automatically.
+repo_root: /Users/satadel/scratch-entropy/coldcard-vuln
+label: "vulnerable (tag 2026-07-01T1730-v5.5.1)"
+commit: "ae88593552403303a1973f1a927095b62cc059af"
+repo: "Coldcard/firmware"
+
+adapter: coldcard
+board: COLDCARD_MK4
+build:
+  backend: make
+
+# The real toolchain Coldcard's own build uses - resolved relative to
+# this project's own root, not repo_root.
+target_yaml: data/targets/arm-none-eabi-cortex-m4-gcc11.yaml
+
+# Finds s_hdnode_from_master via the "Bitcoin seed" structural anchor -
+# an honest UNKNOWN today (backward interprocedural argument tracing not
+# implemented), reported in coverage regardless.
+run_bip32_anchor: true
+
+# Read live from this checkout's own mpconfigboard.h - whether Coldcard's
+# own build enables MicroPython's built-in HW RNG source (it doesn't; the
+# actual RNG path goes through libngu's own C driver instead). Kept as
+# evidence, not a hardcoded literal, since the value and its line number
+# vary per checkout.
+config_values:
+  - name: MICROPY_HW_ENABLE_RNG
+    file: stm32/COLDCARD_MK4/mpconfigboard.h

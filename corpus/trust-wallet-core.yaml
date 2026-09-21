@@ -1,0 +1,35 @@
+# Entropy Trace corpus stub — Trust Wallet Core WASM weak-entropy incident.
+# Verified by direct inspection of a full clone of
+# https://github.com/trustwallet/wallet-core (branch: default/master, tags fetched).
+
+case: trust-wallet-core-wasm-random-pre-3.1.1
+repos:
+  - name: wallet-core
+    url: https://github.com/trustwallet/wallet-core
+
+vulnerable:
+  tag: "3.1.0"
+  sha: "efca5eeef5ab79df88914c7be2c287317cd10234"
+  date: "2022-11-14 14:06:44 +0100"
+  file: "wasm/src/Random.cpp"
+  note: >
+    random32() and random_buffer() seed std::mt19937 (Mersenne Twister, not
+    cryptographically secure) from std::random_device{}(). In Emscripten/WASM
+    builds this is not backed by a real OS entropy source the way it is on a
+    native target -- the emscripten-targeted code path had no browser
+    crypto.getRandomValues() call at all before the fix.
+
+patched:
+  tag: "3.1.1"
+  sha: "d3c2eee16b154cbb69e8959b01e5e71fbabb1212"
+  date: "2022-11-21 16:16:14 +0100"
+  pr: "#2750 [emscripten]: use javascript for random generation"
+  file: "wasm/src/Random.cpp"
+  note: >
+    Replaces std::mt19937/std::random_device with a JS-side source: browser
+    crypto.getRandomValues() (falling back to msCrypto), or Node's
+    crypto.randomBytes() outside the browser, called via EM_ASM. Comment in
+    the diff cites libsodium's randombytes.c as the design reference.
+
+confidence: high
+verification: "direct git log/show against full clone; tag-to-commit mapping confirmed with `git log -1 <tag>`"

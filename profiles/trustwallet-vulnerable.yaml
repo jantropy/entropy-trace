@@ -1,0 +1,41 @@
+# Trust Wallet Core's vulnerable tag (3.1.0), as a profile. No adapter -
+# this is exactly the case that needs none: a plain CMake-configured
+# build with a compile_commands.json already exported, no board symlinks,
+# no build-generated-header stubs, nothing project-specific to prepare
+# first.
+repo_root: /Users/satadel/scratch-entropy/twc-vuln
+label: "vulnerable (tag 3.1.0)"
+commit: "efca5eeef5ab79df88914c7be2c287317cd10234"
+repo: "trustwallet/wallet-core"
+
+# Purely a human-readable label for findings.json's build_profile.board -
+# no adapter reads this field for TWC, recorded so the report says what
+# the exported compile_commands.json actually targeted.
+board: "wasm (emscripten target, compile_commands.json via host-substituted CMake configure)"
+
+build:
+  backend: compile_commands
+  compile_commands: build-wasm-attempt/compile_commands.json
+  # Documentary only - the compile_commands backend reads the file above
+  # as-is and never invokes CMake itself, so these are never consumed.
+  # Recorded here purely for findings.json provenance: the CMake flags
+  # used to configure the build that produced that file.
+  make_vars:
+    TW_UNIT_TESTS: "OFF"
+    TW_COMPILE_WASM: "ON"
+
+# TWC isn't being cross-compiled for Coldcard's ARM target - explicit
+# null (not omitted) disables target-macro substitution and any sysroot,
+# rather than silently inheriting an irrelevant ARM macro environment.
+target_yaml: null
+
+# The BIP-32 "Bitcoin seed" structural anchor doesn't generalise to this
+# tree's trezor-crypto shape (checked and confirmed not to fire) -
+# deliberately not run here rather than reporting a false zero.
+run_bip32_anchor: false
+
+# random32/random_buffer are TWC-specific catalogue entries, not part of
+# this project's own data/sinks.yaml defaults - pointed at the
+# corpus-level catalogue that already has them instead of duplicating
+# them inline.
+sinks_yaml: ../corpus/trustwallet.yaml

@@ -1,0 +1,119 @@
+{
+  "schema_version": "1.3.0",
+  "generated_at": "2026-09-14T10:03:52.533008+00:00",
+  "label": "vulnerable (tag 3.1.0)",
+  "build_profile": {
+    "repo": "trustwallet/wallet-core",
+    "commit": "efca5eeef5ab79df88914c7be2c287317cd10234",
+    "board": "wasm (emscripten target, compile_commands.json via host-substituted CMake configure -- see spike/PHASE_D.md, D3.1)",
+    "make_vars": {
+      "TW_UNIT_TESTS": "OFF",
+      "TW_COMPILE_WASM": "ON"
+    },
+    "sysroot": {
+      "used": false
+    }
+  },
+  "sink": {
+    "name": "random32",
+    "language": "c",
+    "file": "wasm/src/Random.cpp",
+    "line": 14,
+    "category": "SEED_GENERATION",
+    "entropy_critical": true,
+    "mechanism": "catalogue"
+  },
+  "config_values": [],
+  "chain": [
+    {
+      "index": 0,
+      "kind": "c_call",
+      "symbol": "random32",
+      "file": "wasm/src/Random.cpp",
+      "line": 14,
+      "detail": "",
+      "resolution_verdict": null
+    }
+  ],
+  "terminal": {
+    "symbol": "random32",
+    "category": "NON_CRYPTO_PRNG",
+    "matched_entry": "mt19937",
+    "match_kind": "body_contains"
+  },
+  "status": "CLASSIFIED",
+  "unknown_reason": null,
+  "confidence": "high",
+  "unknown_count": 0,
+  "coverage": {
+    "sinks_found": 2,
+    "sinks_found_by_category": {
+      "SEED_GENERATION": 2
+    },
+    "chains_closed": 2,
+    "chains_unknown": 0,
+    "percentage_resolved": 100.0,
+    "chains": [
+      {
+        "sink_name": "random32",
+        "sink_category": "SEED_GENERATION",
+        "entropy_critical": true,
+        "mechanism": "catalogue",
+        "file": "wasm/src/Random.cpp",
+        "line": 14,
+        "status": "CLASSIFIED",
+        "terminal_category": "NON_CRYPTO_PRNG",
+        "chain": [
+          {
+            "index": 0,
+            "kind": "c_call",
+            "symbol": "random32",
+            "file": "wasm/src/Random.cpp",
+            "line": 14,
+            "detail": "",
+            "resolution_verdict": null
+          }
+        ]
+      },
+      {
+        "sink_name": "random_buffer",
+        "sink_category": "SEED_GENERATION",
+        "entropy_critical": true,
+        "mechanism": "catalogue",
+        "file": "wasm/src/Random.cpp",
+        "line": 19,
+        "status": "CLASSIFIED",
+        "terminal_category": "NON_CRYPTO_PRNG",
+        "chain": [
+          {
+            "index": 0,
+            "kind": "c_call",
+            "symbol": "random_buffer",
+            "file": "wasm/src/Random.cpp",
+            "line": 19,
+            "detail": "",
+            "resolution_verdict": null
+          }
+        ]
+      }
+    ]
+  },
+  "policy": {
+    "mode": "pr",
+    "verdicts": [
+      {
+        "sink_name": "random32",
+        "status": "CLASSIFIED",
+        "terminal_category": "NON_CRYPTO_PRNG",
+        "verdict": "FAIL"
+      },
+      {
+        "sink_name": "random_buffer",
+        "status": "CLASSIFIED",
+        "terminal_category": "NON_CRYPTO_PRNG",
+        "verdict": "FAIL"
+      }
+    ],
+    "overall_verdict": "FAIL"
+  }
+}

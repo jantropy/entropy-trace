@@ -1,0 +1,32 @@
+# libsodium 1.0.20-RELEASE, the third, held-out project used to test
+# generalisation. Structurally different from both earlier cases on
+# purpose:
+#   - Coldcard: cross-compiled embedded firmware, `make -n` dry run,
+#     needs an adapter (board symlinks, default make vars) and a target
+#     macro table + ARM sysroot.
+#   - Trust Wallet Core: host-compiled CMake C++ tree, compile_commands.json
+#     already exported, no adapter.
+#   - libsodium (this file): host-compiled plain autotools C library,
+#     make -n dry run, no adapter - but its Automake+libtool build prints
+#     recipes in a different shape than Coldcard's MicroPython Makefile,
+#     and this profile needs build.dir since the real build only cd's
+#     into src/libsodium/ before compiling.
+repo_root: /Users/satadel/scratch-entropy/libsodium-1.0.20
+label: "libsodium 1.0.20 (tag 1.0.20-RELEASE)"
+commit: "1.0.20-RELEASE"
+repo: "jedisct1/libsodium"
+
+build:
+  backend: make
+  dir: src/libsodium
+
+# A host-native build - no ARM cross-target, no sysroot (explicit null,
+# not omitted: this disables target-macro substitution rather than
+# silently inheriting an irrelevant default).
+target_yaml: null
+
+# Run for an honest empirical answer rather than assuming libsodium has
+# no BIP-32 code - see corpus/libsodium.yaml's header note.
+run_bip32_anchor: true
+
+sinks_yaml: ../corpus/libsodium.yaml

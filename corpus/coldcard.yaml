@@ -1,0 +1,219 @@
+# Entropy Trace corpus - Coldcard firmware RNG incident.
+#
+# Both the vulnerable tag and the patched commit pin the SAME libngu
+# commit, 537519a829259622ea6b0334fbafd6cae852852f - libngu's own later,
+# independent bug-fix timeline (the days immediately after the exploit,
+# when it was hardened against a recurrence) describes a DIFFERENT commit
+# range entirely, kept separately below under `libngu_repair_timeline`
+# rather than conflated with "vulnerable"/"patched".
+#
+# All SHAs verified by direct inspection of full (unshallowed) clones of
+# https://github.com/Coldcard/firmware, https://github.com/Coldcard/micropython,
+# and https://github.com/switck/libngu, plus two git worktrees pinned to
+# the vulnerable tag and the patched commit.
+
+case: coldcard-rng-2026
+repos:
+  - name: coldcard-firmware
+    url: https://github.com/Coldcard/firmware
+  - name: coldcard-micropython
+    url: https://github.com/Coldcard/micropython
+    note: "submodule at external/micropython; pinned commit (4107246f) unchanged across the fix"
+  - name: libngu
+    url: https://github.com/switck/libngu
+    note: "submodule at external/libngu; Coldcard's crypto/entropy library"
+
+analysed_build:
+  # What the two git worktrees this project's differential tests actually
+  # run against pin, for every submodule - the ground truth for
+  # entropytrace's own computed chains, not a hand-picked commit range.
+  vulnerable:
+    coldcard_firmware_tag: "2026-07-01T1730-v5.5.1"
+    coldcard_firmware_sha: "ae88593552403303a1973f1a927095b62cc059af"
+    coldcard_firmware_tag_date: "2026-07-01 13:30:04 -0400"
+    coldcard_micropython_sha: "4107246f8a080807b62c3b4838e71e812ea68b6f"
+    libngu_sha: "537519a829259622ea6b0334fbafd6cae852852f"
+    libngu_commit_date: "2024-08-27 14:17:05 +0200"
+    libngu_commit_message: "HW accelerated tagged_sha256"
+    note: >
+      Verified at this tag (git show <sha>:<path>):
+      (1) stm32/COLDCARD_MK4/mpconfigboard.h:78 defines
+      MICROPY_HW_ENABLE_RNG as (0);
+      (2) stm32/COLDCARD_MK4/rng.c defines pyb_rng_get (:86),
+      pyb_rng_get_bytes (:94), random32 (:119), random_buffer (:131), and
+      the static rng_init (:46) / rng_get_or_fault (:61) -- no bare global
+      rng_get();
+      (3) the pinned external/micropython submodule has the #else/Yasmarang
+      branch in ports/stm32/rng.c (see libngu_root_cause_guard below for
+      how it gets called).
+      Next tag after this one is 2026-07-31T0519-v5.6.0 (the day after the
+      exploit, a few hours after the patched commit below) -- i.e. v5.5.1
+      is exactly the boundary release.
+  patched:
+    coldcard_firmware_sha: "ca72463709f4e3f8964952039d5caf955f566a87"
+    coldcard_firmware_commit_message: "fixes rng"
+    coldcard_firmware_commit_date: "2026-07-30 22:40:23 -0400"
+    coldcard_micropython_sha: "4107246f8a080807b62c3b4838e71e812ea68b6f"
+    libngu_sha: "537519a829259622ea6b0334fbafd6cae852852f"
+    note: >
+      Same libngu commit as vulnerable -- the fix commit did not touch that
+      submodule pointer at all (confirmed: `git ls-tree ca724637^
+      external/libngu` == `git ls-tree ca724637 external/libngu`). Adds
+      `rng_get()` to the board's own rng.c (stm32/COLDCARD_MK4/rng.c),
+      forces vanilla micropython's ports/stm32/rng.o to build from
+      /dev/null (zero symbols), and adds a build-time `rng-code-check`
+      target (stm32/shared.mk) that runs arm-none-eabi-nm to assert
+      upstream rng.o defines nothing and the board's rng.o exports a
+      global T rng_get.
+  coldcard_firmware_sha_2021_introduced: "b18723dddb6d751c39978e4364b56b2414f68b47"
+  coldcard_firmware_note_2021: >
+    "First pass w/ libNgU" (2021-03-01) -- kept for historical record only.
+    Marks where the vulnerable condition (MICROPY_HW_ENABLE_RNG=(0) with no
+    board-level rng_get()) was first introduced, four+ years before the
+    2026-07-30 exploit -- not what actually shipped then. The vulnerable
+    tag above is the concrete "what shipped" answer.
+
+toolchain_provenance:
+  # What Coldcard's own build actually pins, vs. what this project's
+  # analysis captures its target macro table from - recorded here so the
+  # two never silently drift apart unnoticed.
+  coldcard_own_build:
+    source: "stm32/dockerfile.build, invoked by `make repro` (docs/notes-on-repro.md)"
+    recipe: "FROM alpine:3.16.0; apk add gcc-arm-none-eabi newlib-arm-none-eabi --repository http://dl-cdn.alpinelinux.org/alpine/edge/testing/"
+    note: >
+      `edge/testing` is a rolling repository, not a version-pinned release --
+      this records what it resolved to when checked (below), not a claim
+      that Coldcard's build has always used or will always use this exact
+      version.
+    resolved_when_checked: "gcc-arm-none-eabi-11.2.0-r2 (Alpine Linux gcc 11.2.0), newlib-arm-none-eabi-4.2.0.20211231-r1, checked 2026-09-13"
+  entropytrace_target_yaml: data/targets/arm-none-eabi-cortex-m4-gcc11.yaml
+  macro_version_reachability_check:
+    scope: >
+      Scoped to this tree. This is a statement about the Coldcard/
+      MicroPython/libngu corpus as analysed here today, not a general claim
+      that ARM GCC compiler-version drift never matters. A different
+      project must re-run the method, not reuse the conclusion.
+    method: >
+      Build the real pinned toolchain via Docker, dump `-dM -E` with the
+      project's actual compile flags, diff against the previously-captured
+      table, then grep the entire analysed tree for every differing macro
+      name used inside a real #if/#elif -- not just the RNG-relevant files.
+    result_for_this_tree: >
+      13 macro names differ between arm-none-eabi-gcc 10.3.1 (Ubuntu apt,
+      this project's original capture) and 11.2.0 (Alpine edge/testing,
+      Coldcard's own build): __GNUC__/__GNUC_MINOR__/__GNUC_PATCHLEVEL__/
+      __GXX_ABI_VERSION/__VERSION__ change value; 8 IEC-60559 conformance
+      and charset-name macros are new in 11.2.0 and were absent in 10.3.1.
+      Every #if/#elif in the analysed tree that references __GNUC__ or
+      __GNUC_MINOR__ (11 files: MicroPython's py/ core, the STM32 USB
+      stack, libngu's vendored secp256k1) checks a threshold (>=3.4, >=4,
+      4.8, >=5, >=7, >=8) that both 10.3.1 and 11.2.0 satisfy identically;
+      the other 8 macros are referenced nowhere in the tree at all. Both
+      committed findings-{vulnerable,patched}.json fixtures were
+      regenerated against the 11.2.0 table and are byte-identical to the
+      10.3.1-generated versions apart from the new provenance field
+      recording which table was used.
+
+libngu_root_cause_guard:
+  # The actual defect, quoted from the commit right before libngu's own
+  # incident-response fixes began (0371d637, one commit further forward
+  # than the pinned 537519a8 above, still describing the SAME code shape
+  # that was live at the pinned commit and at the time of the exploit).
+  sha: "0371d6372eb7c1165f9c0410f6d6537e09882402"
+  commit_date: "2026-08-06 13:07:14 +0200"
+  commit_message: "testing: cifra sha265 drbg"
+  note: >
+    This is the last libngu commit before the incident-response fixes
+    started landing later that same day -- one commit ahead of the pinned
+    537519a8, but the guard quoted below is unchanged between the two.
+    ngu/random.c lines 24-31 read:
+      #ifdef MICROPY_PY_STM
+      extern uint32_t rng_get(void);
+      # define CHIP_TRNG_32()         rng_get()
+      # ifndef MICROPY_HW_ENABLE_RNG
+      # error "get a HW TRNG plz"
+      # endif
+      #endif
+    `#ifndef MICROPY_HW_ENABLE_RNG` tests definedness, not value. Coldcard's
+    board headers DO `#define MICROPY_HW_ENABLE_RNG (0)` (defined, set to 0),
+    so the #error never fires. CHIP_TRNG_32() unconditionally becomes
+    rng_get(), an extern resolved at link time. Because the board's rng.c
+    did not yet define rng_get() at the pinned/vulnerable state, that
+    symbol was satisfied by vanilla micropython's ports/stm32/rng.c, whose
+    `#else` branch (taken because MICROPY_HW_ENABLE_RNG evaluates to 0)
+    defines rng_get() as the Yasmarang software PRNG.
+  root_cause_class: "link-time symbol resolution / missing-definition, not a single-file #if/#else"
+
+libngu_repair_timeline:
+  # A separate, later history - libngu hardening itself against a
+  # recurrence, in the days immediately after the 2026-07-30 exploit. Not
+  # what either analysed Coldcard tree pins (see analysed_build above);
+  # kept because it is real, dated, and directly explains why the guard
+  # above eventually changed shape, but the patched worktree's libngu is
+  # byte-identical to the vulnerable worktree's (same pinned SHA,
+  # predating this entire timeline).
+  - sha: "e9d5e8034c90edc1bce791a0fff43ac0877b925f"
+    date: "2026-07-31 08:57:30 +0200"
+    message: "Enforce HW TRNG"
+    note: "Same day as the exploit + 1. First fix attempt -- too strict for Coldcard's own architecture (which legitimately wants MICROPY_HW_ENABLE_RNG=0), reverted below."
+  - sha: "695549bbfde9e93d8da7f7a903b5301960b7ea19"
+    date: "2026-08-07 09:02:04 +0200"
+    message: "Revert \"Enforce HW TRNG\""
+  - sha: "e18669baf9e331f86cacb033ecee6858abbea2dd"
+    date: "2026-08-07 09:02:27 +0200"
+    message: "Allow an external STM32 rng_get provider"
+    note: "Replaces the reverted fix with the NGU_STM32_EXTERNAL_RNG_GET escape hatch, landed the same minute-scale window as the revert."
+  - sha: "a196804d19772dbc1a102d5bf92c7ce879307031"
+    date: "2026-08-06 22:56:59 -0400"
+    message: "random: harden entropy backend boundaries"
+    note: "Introduces ngu/random_backend.h and the checked_chip_trng_read()/chip_trng_read() indirection -- neither exists at the pinned commit."
+  - sha: "5d04106a16afea6c3aa7802366e1687e55331cf8"
+    date: "2026-08-09 20:42:00 -0400"
+    message: "random: select STM32 backend when stm module is disabled"
+    note: >
+      Final, stable state of the repair. ngu/random_backend.h's STM32
+      branch now reads:
+        #elif defined(MICROPY_PY_STM)
+        # if MICROPY_HW_ENABLE_RNG != 1 && NGU_STM32_EXTERNAL_RNG_GET != 1
+        #  error "MICROPY_HW_ENABLE_RNG=1 or NGU_STM32_EXTERNAL_RNG_GET=1 required"
+        # endif
+      i.e. tests the value, and accepts an explicit board-declared
+      override macro instead of merely checking definedness -- the actual
+      fix for the root-cause guard's class of bug, landed independently of
+      (and about ten days after) the Coldcard-firmware-side fix
+      (ca724637) that entropytrace's own computed chain reaches.
+
+entropy_chain:
+  # The computed chain, copied verbatim from fixtures/findings-vulnerable.json
+  # and fixtures/findings-patched.json rather than hand-typed, so this list
+  # can't drift from what the tool actually computed.
+  shared_prefix:
+    # Byte-for-byte identical in both fixtures -- both pin the same libngu
+    # commit, so nothing before rng_get() itself can differ.
+    - "shared/seed.py:602 generate_seed() [python_sink]"
+    - "shared/seed.py:605 ngu.random.bytes(32) [ffi -> random_bytes]"
+    - "boards/COLDCARD_MK4/c-modules/libngu/random.c:145 random_bytes() [c_call]"
+    - "boards/COLDCARD_MK4/c-modules/libngu/random.c:68 my_random_bytes() [c_call, local]"
+  vulnerable_divergence:
+    - "rng.c:96 rng_get() [c_call, resolve() -- RESOLVED to the vanilla micropython fork's ports/stm32/rng.c, not the board's own file]"
+    - "rng.c:74 pyb_rng_yasmarang() [c_call, local]"
+    - "terminal: NON_CRYPTO_PRNG (matched pyb_rng_yasmarang, function_name)"
+  patched_divergence:
+    - "boards/COLDCARD_MK4/rng.c:82 rng_get() [c_call, resolve() -- RESOLVED to the board's own file]"
+    - "boards/COLDCARD_MK4/rng.c:61 rng_get_or_fault() [c_call, local]"
+    - "terminal: HW_TRNG (matched RNG_TypeDef, body_contains)"
+  note: >
+    shared/drv_entro.py:149's bip39.b2a_words(new_secret) does NOT appear
+    here, correctly: it is not part of generate_seed()'s own call graph
+    (drv_entro.py calls it separately, on the value generate_seed() already
+    returned, to render it as displayable mnemonic words) -- "how the seed
+    becomes a mnemonic" and "where the seed's entropy comes from" are two
+    different questions.
+
+confidence: high
+verification: >
+  direct source read + git log/show against full clones and two pinned
+  worktrees, all SHAs quoted above resolve in the actual repos as of
+  2026-09-13; entropy_chain is copied verbatim from computed, schema-
+  validated fixtures (fixtures/findings-{vulnerable,patched}.json), not
+  hand-derived.

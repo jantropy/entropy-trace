@@ -1,0 +1,25 @@
+# libsodium corpus sink catalogue - the held-out generalisation test
+# project: a general-purpose C crypto library, plain autotools
+# ./configure && make, no adapter needed.
+#
+# libsodium is not itself an HD-wallet implementation - it has no BIP-32
+# derivation code anywhere in this tree, so the "Bitcoin seed" structural
+# anchor isn't expected to find anything here; run anyway
+# (profiles/libsodium.yaml sets run_bip32_anchor: true) for an honest
+# empirical answer rather than an assumed one.
+#
+# Traced via a named catalogue entry instead: crypto_sign_ed25519_keypair,
+# the Ed25519 signing-keypair generator that real software linking against
+# libsodium for key generation calls directly.
+
+- name: crypto_sign_ed25519_keypair
+  category: SEED_GENERATION
+  language: c
+  file: src/libsodium/crypto_sign/ed25519/ref10/keypair.c
+  entry_symbol: crypto_sign_ed25519_keypair
+  note: >
+    int crypto_sign_ed25519_keypair(unsigned char *pk, unsigned char *sk) --
+    generates a fresh Ed25519 signing keypair via
+    randombytes_buf(seed, sizeof seed). Confirmed present, under this
+    exact name and signature, in the 1.0.20-RELEASE tag
+    (https://github.com/jedisct1/libsodium/releases/tag/1.0.20-RELEASE).

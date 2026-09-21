@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>patched (fixes rng)</title>
+<style>
+:root {
+  --bg: #17140F;
+  --bg-raised: #201B13;
+  --bg-card: #221D15;
+  --border: #3A3123;
+  --text: #EFE8D8;
+  --text-dim: #A89E88;
+  --accent: #F7931A;
+  --fail: #E24B4A;
+  --mono: "SF Mono", "Menlo", "Consolas", "Liberation Mono", monospace;
+  --sans: -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  line-height: 1.5;
+}
+body {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 48px 32px 96px;
+}
+h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
+h1 { font-size: 1.7rem; margin: 0 0 4px; }
+h2 { font-size: 1.15rem; margin: 0 0 20px; color: var(--text); }
+h3 { font-size: 1.05rem; margin: 0 0 4px; }
+code, .mono, .file-line, .symbol { font-family: var(--mono); font-size: 0.92em; }
+a { color: var(--accent); }
+.section { margin: 56px 0; }
+.section:first-of-type { margin-top: 0; }
+
+/* --- Verdict banner --- */
+.banner {
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  border-radius: 10px;
+  padding: 28px 32px;
+}
+.banner .pill {
+  display: inline-block;
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 0.85rem;
+  letter-spacing: 0.04em;
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  margin-bottom: 14px;
+}
+.v-pass { color: var(--text); }
+.v-warn { color: var(--accent); }
+.v-fail { color: var(--fail); }
+.banner .meta { color: var(--text-dim); margin-top: 10px; font-size: 0.95rem; }
+.banner .meta div { margin: 3px 0; }
+.banner .meta .mono { color: var(--text); }
+.sysroot-warning { color: var(--accent); margin-top: 6px !important; }
+
+/* --- Coverage --- */
+.coverage-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.stat {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  background: var(--bg-card);
+}
+.stat .num { font-family: var(--mono); font-size: 1.6rem; font-weight: 700; color: var(--accent); }
+.stat .label { color: var(--text-dim); font-size: 0.82rem; margin-top: 4px; }
+.category-breakdown { color: var(--text-dim); font-size: 0.9rem; }
+.category-breakdown span { color: var(--text); font-family: var(--mono); }
+
+/* --- Finding cards --- */
+.card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-card);
+  padding: 24px 28px;
+  margin-bottom: 24px;
+}
+.card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 14px;
+  margin-bottom: 16px;
+}
+.card-head .sink-name { font-family: var(--mono); font-size: 1.1rem; font-weight: 700; }
+.card-head .sink-category { color: var(--text-dim); font-size: 0.85rem; }
+.badge {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+}
+.kv-row { display: flex; gap: 8px; font-size: 0.9rem; margin: 4px 0; color: var(--text-dim); }
+.kv-row .k { min-width: 150px; }
+.kv-row .v { color: var(--text); }
+
+.chain {
+  margin: 18px 0;
+  padding-left: 4px;
+  border-left: 2px solid var(--border);
+}
+.hop {
+  position: relative;
+  padding: 10px 0 10px 22px;
+  border-left: 2px solid var(--border);
+  margin-left: -2px;
+}
+.hop::before {
+  content: "";
+  position: absolute;
+  left: -7px;
+  top: 16px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--bg-card);
+  border: 2px solid var(--text-dim);
+}
+.hop:last-child { border-left: 2px solid transparent; }
+.hop .symbol { font-weight: 700; }
+.hop .file-line { color: var(--text-dim); margin-left: 8px; }
+.hop .detail { color: var(--text-dim); font-size: 0.85rem; margin-top: 2px; }
+.hop.terminal::before {
+  width: 14px;
+  height: 14px;
+  left: -9px;
+  border-width: 3px;
+}
+.hop.terminal.good::before { border-color: var(--accent); background: var(--accent); }
+.hop.terminal.bad::before { border-color: var(--fail); background: var(--fail); }
+/* UNKNOWN is its own visual category -- a hollow, dashed ring in the dim
+   text colour, never filled, never red, never the accent orange.
+   Uncertainty is not a pass and not a failure. */
+.hop.terminal.unknown::before {
+  border-color: var(--text-dim);
+  border-style: dashed;
+  background: transparent;
+}
+.hop.terminal { padding-top: 14px; padding-bottom: 4px; }
+.hop.terminal .terminal-label {
+  display: block;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-bottom: 2px;
+}
+.hop.terminal.good .terminal-label { color: var(--accent); }
+.hop.terminal.bad .terminal-label { color: var(--fail); }
+.hop.terminal.unknown .terminal-label { color: var(--text-dim); }
+
+.why { font-size: 0.92rem; color: var(--text-dim); margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+.why .label { color: var(--text); font-weight: 600; }
+
+.unknown-reason {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px 14px;
+  color: var(--fail);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.unknown-list .item { margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+.unknown-list .item:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+.unknown-list .broke-at { color: var(--text-dim); font-size: 0.85rem; margin-bottom: 6px; }
+
+footer { margin-top: 64px; padding-top: 20px; border-top: 1px solid var(--border); color: var(--text-dim); font-size: 0.82rem; }
+</style>
+</head>
+<body>
+
+<div class="banner">
+  <span class="pill v-warn">OVERALL: WARN</span>
+  <h1>patched (fixes rng)</h1>
+  <div class="meta">
+    <div>Repo: <span class="mono">Coldcard/firmware</span></div>
+    <div>Commit / tag: <span class="mono">ca72463709f4e3f8964952039d5caf955f566a87</span></div>
+    <div>Board / backend: <span class="mono">COLDCARD_MK4</span></div>
+    <div>Policy mode: <span class="mono">pr</span></div>
+    <div>Coverage: 1/2 entropy-critical sinks resolved to a classified terminal (50.0%)</div>
+    <div>Target sysroot: <span class="mono">gcc-arm-none-eabi gcc-arm-none-eabi-11.2.0-r2, newlib-arm-none-eabi newlib-arm-none-eabi-4.2.0.20211231-r1</span></div>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Coverage</h2>
+  <div class="coverage-grid">
+    <div class="stat"><div class="num">2</div><div class="label">sinks found</div></div>
+    <div class="stat"><div class="num">1</div><div class="label">chains closed</div></div>
+    <div class="stat"><div class="num">1</div><div class="label">chains unknown</div></div>
+    <div class="stat"><div class="num">50.0%</div><div class="label">resolved</div></div>
+  </div>
+  <div class="category-breakdown">By category: <span>SEED_GENERATION: 2</span></div>
+</div>
+<div class="section"><h2>Findings</h2>
+<div class="card">
+  <div class="card-head">
+    <div>
+      <div class="sink-name">s_hdnode_from_master</div>
+      <div class="sink-category">SEED_GENERATION &middot; located via structural_anchor</div>
+    </div>
+    <span class="badge v-warn">WARN &mdash; could not be fully resolved</span>
+  </div>
+  <div class="kv-row"><span class="k">Location</span><span class="v mono">boards/COLDCARD_MK4/c-modules/libngu/hdnode.c:297</span></div>
+  <div class="kv-row"><span class="k">Policy mode</span><span class="v mono">pr</span></div>
+  <div class="kv-row"><span class="k">Confidence</span><span class="v mono">low</span></div>
+  <div class="kv-row"><span class="k">Broke at hop</span><span class="v mono">master_secret_in</span></div><div class="unknown-reason">&#x27;master_secret_in&#x27; is a formal parameter of &#x27;s_hdnode_from_master&#x27;, not a callable entry point -- tracing what flows into it requires backward interprocedural argument tracing across this function&#x27;s call sites, which slice.py does not implement (see this function&#x27;s docstring)</div>
+  <div class="chain">
+    
+    <div class="hop terminal unknown"><span class="terminal-label">terminal: UNKNOWN</span><span class="symbol">s_hdnode_from_master</span></div>
+  </div>
+  <div class="why"><span class="label">Why this matters:</span> The trace could not reach a terminal this project&#x27;s registry recognises. This does not mean the source is bad -- it means the tool could not determine what it is, which is itself information worth resolving before relying on this sink.</div>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <div>
+      <div class="sink-name">generate_seed</div>
+      <div class="sink-category">SEED_GENERATION &middot; located via catalogue</div>
+    </div>
+    <span class="badge v-pass">PASS &mdash; resolved to an accepted source</span>
+  </div>
+  <div class="kv-row"><span class="k">Location</span><span class="v mono">shared/seed.py:602</span></div>
+  <div class="kv-row"><span class="k">Policy mode</span><span class="v mono">pr</span></div>
+  <div class="kv-row"><span class="k">Confidence</span><span class="v mono">high</span></div>
+  
+  <div class="chain">
+    <div class="hop"><span class="symbol">generate_seed</span><span class="file-line">shared/seed.py:602</span></div><div class="hop"><span class="symbol">ngu.random.bytes</span><span class="file-line">shared/seed.py:605</span><div class="detail">-&gt; random_bytes</div></div><div class="hop"><span class="symbol">random_bytes</span><span class="file-line">boards/COLDCARD_MK4/c-modules/libngu/random.c:145</span></div><div class="hop"><span class="symbol">my_random_bytes</span><span class="file-line">boards/COLDCARD_MK4/c-modules/libngu/random.c:68</span><div class="detail">resolution: local</div></div><div class="hop"><span class="symbol">rng_get</span><span class="file-line">boards/COLDCARD_MK4/rng.c:82</span><div class="detail">resolution: RESOLVED</div></div><div class="hop"><span class="symbol">rng_get_or_fault</span><span class="file-line">boards/COLDCARD_MK4/rng.c:61</span><div class="detail">resolution: local</div></div>
+    <div class="hop terminal good"><span class="terminal-label">terminal: HW_TRNG</span><span class="symbol">rng_get_or_fault</span></div>
+  </div>
+  <div class="why"><span class="label">Why this matters:</span> A hardware TRNG samples physical noise. This is the strongest class of source this registry recognises for entropy-critical generation.</div>
+</div>
+</div><div class="section"><h2>Unknown hops</h2><div class="unknown-list">
+<div class="item">
+  <h3>s_hdnode_from_master <span class="mono" style="color:var(--text-dim); font-weight:400;">(boards/COLDCARD_MK4/c-modules/libngu/hdnode.c:297)</span></h3>
+  <div class="broke-at">Broke at hop: <span class="mono">master_secret_in</span></div>
+  <div class="unknown-reason">&#x27;master_secret_in&#x27; is a formal parameter of &#x27;s_hdnode_from_master&#x27;, not a callable entry point -- tracing what flows into it requires backward interprocedural argument tracing across this function&#x27;s call sites, which slice.py does not implement (see this function&#x27;s docstring)</div>
+</div>
+</div></div><div class="section"><h2>Build configuration values discovered</h2><div class="kv-row"><span class="k mono">MICROPY_HW_ENABLE_RNG = 0</span><span class="v mono">stm32/COLDCARD_MK4/mpconfigboard.h:79</span></div></div>
+
+<footer>
+  Generated 2026-09-14T10:03:08.493299+00:00 by Entropy Trace, schema 1.3.0.
+  This report states which entropy source class a sink resolved to under this policy mode, or that it could not
+  be determined. It makes no claim about the resulting key material beyond that.
+</footer>
+
+</body>
+</html>

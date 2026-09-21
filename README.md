@@ -159,3 +159,37 @@ classified renders as its own hollow, dashed state, never red and never the
 same colour as a real failure, because uncertainty isn't a failure and must
 never be drawn like one.
 
+## The real cases, computed
+
+`fixtures/` holds the actual, computed `findings.json` (plus SARIF and HTML)
+for both real incidents described above, at both the vulnerable and patched
+commit - not hand-typed, not simulated. `corpus/` holds the evidence each
+one is built from: real commit SHAs, real code quoted from the actual repos,
+confidence levels, and what was and wasn't independently verified.
+`profiles/` holds the profile YAML that produced each fixture - the same
+kind of file `cli.py` takes for any project.
+
+libsodium's fixture is there too - the held-out generalisation test: a real,
+general-purpose crypto library, never examined before it was added, run
+through the exact same pipeline as the two disclosed vulnerabilities, with
+a clean result (its own randomness call resolves to a real library CSPRNG).
+A clean result is a good result; the point wasn't to find a third bug; it
+was to check whether the tool actually generalises past the two cases it was
+built against, or just happened to fit them.
+
+## Running the tests
+
+```
+pytest                    # full suite
+pytest -m "not slow"      # fast suite - skips the tests that need a real,
+                           # full-size checkout on disk
+```
+
+Most of this project's own tests are self-contained - synthetic C sources,
+hand-built symbol tables, the small corpus under `corpus/synthetic/`. A
+handful genuinely need a real checkout of Coldcard's firmware or Trust
+Wallet Core sitting on disk at a path this project doesn't ship (see each
+differential test file's own docstring for how to set one up) - those are
+skipped automatically when the checkout isn't present, and marked `slow`
+so a normal test run doesn't wait on them even when it is.
+

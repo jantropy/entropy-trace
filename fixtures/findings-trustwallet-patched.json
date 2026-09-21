@@ -1,0 +1,86 @@
+{
+  "schema_version": "1.3.0",
+  "generated_at": "2026-09-14T10:07:08.317955+00:00",
+  "label": "patched (tag 3.1.1)",
+  "build_profile": {
+    "repo": "trustwallet/wallet-core",
+    "commit": "d3c2eee16b154cbb69e8959b01e5e71fbabb1212",
+    "board": "wasm (emscripten target, compile_commands.json via host-substituted CMake configure -- see spike/PHASE_D.md, D3.1)",
+    "make_vars": {
+      "TW_UNIT_TESTS": "OFF",
+      "TW_COMPILE_WASM": "ON"
+    },
+    "sysroot": {
+      "used": false
+    }
+  },
+  "sink": {
+    "name": "random32",
+    "language": "c",
+    "file": "wasm/src/Random.cpp",
+    "line": 78,
+    "category": "SEED_GENERATION",
+    "entropy_critical": true,
+    "mechanism": "catalogue"
+  },
+  "config_values": [],
+  "chain": [],
+  "terminal": null,
+  "status": "UNKNOWN",
+  "unknown_reason": "could not preprocess 'wasm/src/Random.cpp' to locate sink function 'random32' (declared at wasm/src/Random.cpp:78): wasm/src/Random.cpp:10:10: fatal error: 'emscripten.h' file not found",
+  "confidence": "low",
+  "unknown_count": 1,
+  "coverage": {
+    "sinks_found": 2,
+    "sinks_found_by_category": {
+      "SEED_GENERATION": 2
+    },
+    "chains_closed": 0,
+    "chains_unknown": 2,
+    "percentage_resolved": 0.0,
+    "chains": [
+      {
+        "sink_name": "random32",
+        "sink_category": "SEED_GENERATION",
+        "entropy_critical": true,
+        "mechanism": "catalogue",
+        "file": "wasm/src/Random.cpp",
+        "line": 78,
+        "status": "UNKNOWN",
+        "unknown_reason": "could not preprocess 'wasm/src/Random.cpp' to locate sink function 'random32' (declared at wasm/src/Random.cpp:78): wasm/src/Random.cpp:10:10: fatal error: 'emscripten.h' file not found",
+        "broke_at_hop": "random32",
+        "chain": []
+      },
+      {
+        "sink_name": "random_buffer",
+        "sink_category": "SEED_GENERATION",
+        "entropy_critical": true,
+        "mechanism": "catalogue",
+        "file": "wasm/src/Random.cpp",
+        "line": 83,
+        "status": "UNKNOWN",
+        "unknown_reason": "could not preprocess 'wasm/src/Random.cpp' to locate sink function 'random_buffer' (declared at wasm/src/Random.cpp:83): wasm/src/Random.cpp:10:10: fatal error: 'emscripten.h' file not found",
+        "broke_at_hop": "random_buffer",
+        "chain": []
+      }
+    ]
+  },
+  "policy": {
+    "mode": "pr",
+    "verdicts": [
+      {
+        "sink_name": "random32",
+        "status": "UNKNOWN",
+        "terminal_category": null,
+        "verdict": "WARN"
+      },
+      {
+        "sink_name": "random_buffer",
+        "status": "UNKNOWN",
+        "terminal_category": null,
+        "verdict": "WARN"
+      }
+    ],
+    "overall_verdict": "WARN"
+  }
+}

@@ -1,0 +1,198 @@
+{
+  "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "EntropyTrace",
+          "informationUri": "https://github.com/entropy-trace/entropy-trace",
+          "version": "0.1.0",
+          "rules": [
+            {
+              "id": "entropy-trace/non-crypto-prng",
+              "name": "NON_CRYPTO_PRNG",
+              "shortDescription": {
+                "text": "Entropy-critical sink resolves to a non-cryptographic PRNG"
+              },
+              "fullDescription": {
+                "text": "The traced provenance chain for this entropy-critical sink terminates in a non-cryptographic pseudo-random number generator (e.g. a Mersenne Twister or similarly seeded, statistically-uniform-but-predictable generator). This class of source is forbidden for wallet seed, private key, or security-salt generation regardless of policy mode."
+              },
+              "help": {
+                "text": "The traced provenance chain for this entropy-critical sink terminates in a non-cryptographic pseudo-random number generator (e.g. a Mersenne Twister or similarly seeded, statistically-uniform-but-predictable generator). This class of source is forbidden for wallet seed, private key, or security-salt generation regardless of policy mode."
+              }
+            },
+            {
+              "id": "entropy-trace/constant",
+              "name": "CONSTANT",
+              "shortDescription": {
+                "text": "Entropy-critical sink resolves to a constant value"
+              },
+              "fullDescription": {
+                "text": "The traced provenance chain for this entropy-critical sink terminates in a fixed, compile-time or hardcoded value rather than any source of randomness."
+              },
+              "help": {
+                "text": "The traced provenance chain for this entropy-critical sink terminates in a fixed, compile-time or hardcoded value rather than any source of randomness."
+              }
+            },
+            {
+              "id": "entropy-trace/time-seeded",
+              "name": "TIME_SEEDED",
+              "shortDescription": {
+                "text": "Entropy-critical sink resolves to a time-seeded source"
+              },
+              "fullDescription": {
+                "text": "The traced provenance chain for this entropy-critical sink terminates in a source seeded from wall-clock or monotonic time, which has far less entropy than its bit width suggests and is guessable within a practical search space."
+              },
+              "help": {
+                "text": "The traced provenance chain for this entropy-critical sink terminates in a source seeded from wall-clock or monotonic time, which has far less entropy than its bit width suggests and is guessable within a practical search space."
+              }
+            },
+            {
+              "id": "entropy-trace/unknown",
+              "name": "UNKNOWN",
+              "shortDescription": {
+                "text": "Entropy-critical sink could not be resolved to a classified terminal"
+              },
+              "fullDescription": {
+                "text": "The backward trace from this entropy-critical sink stopped before reaching a terminal this project's registry (data/sources.yaml) recognises. This is reported as its own outcome, never silently treated as a pass -- see the `unknown_reason` on the associated result for exactly what was tried and why it stopped."
+              },
+              "help": {
+                "text": "The backward trace from this entropy-critical sink stopped before reaching a terminal this project's registry (data/sources.yaml) recognises. This is reported as its own outcome, never silently treated as a pass -- see the `unknown_reason` on the associated result for exactly what was tried and why it stopped."
+              }
+            },
+            {
+              "id": "entropy-trace/hw-trng",
+              "name": "HW_TRNG",
+              "shortDescription": {
+                "text": "Entropy-critical sink resolves to a hardware TRNG"
+              },
+              "fullDescription": {
+                "text": "The traced provenance chain for this entropy-critical sink terminates in a hardware true-random-number generator (e.g. an on-chip RNG peripheral)."
+              },
+              "help": {
+                "text": "The traced provenance chain for this entropy-critical sink terminates in a hardware true-random-number generator (e.g. an on-chip RNG peripheral)."
+              }
+            },
+            {
+              "id": "entropy-trace/os-csprng",
+              "name": "OS_CSPRNG",
+              "shortDescription": {
+                "text": "Entropy-critical sink resolves to an OS-provided CSPRNG"
+              },
+              "fullDescription": {
+                "text": "The traced provenance chain for this entropy-critical sink terminates in an operating-system-provided CSPRNG source (e.g. getrandom(2), /dev/urandom, or a platform CSPRNG API)."
+              },
+              "help": {
+                "text": "The traced provenance chain for this entropy-critical sink terminates in an operating-system-provided CSPRNG source (e.g. getrandom(2), /dev/urandom, or a platform CSPRNG API)."
+              }
+            },
+            {
+              "id": "entropy-trace/lib-csprng",
+              "name": "LIB_CSPRNG",
+              "shortDescription": {
+                "text": "Entropy-critical sink resolves to a library CSPRNG"
+              },
+              "fullDescription": {
+                "text": "The traced provenance chain for this entropy-critical sink terminates in a userspace cryptographic library's random-generation API (e.g. OpenSSL's RAND_bytes, libsodium's randombytes_buf)."
+              },
+              "help": {
+                "text": "The traced provenance chain for this entropy-critical sink terminates in a userspace cryptographic library's random-generation API (e.g. OpenSSL's RAND_bytes, libsodium's randombytes_buf)."
+              }
+            },
+            {
+              "id": "entropy-trace/user-entropy",
+              "name": "USER_ENTROPY",
+              "shortDescription": {
+                "text": "Entropy-critical sink resolves to user-supplied entropy"
+              },
+              "fullDescription": {
+                "text": "The traced provenance chain for this entropy-critical sink terminates in entropy supplied directly by the user (e.g. dice rolls, card shuffles, or similar user-provided randomness). Reported for visibility, not withheld, even though this class passes under both policy modes."
+              },
+              "help": {
+                "text": "The traced provenance chain for this entropy-critical sink terminates in entropy supplied directly by the user (e.g. dice rolls, card shuffles, or similar user-provided randomness). Reported for visibility, not withheld, even though this class passes under both policy modes."
+              }
+            }
+          ]
+        }
+      },
+      "invocations": [
+        {
+          "executionSuccessful": true,
+          "properties": {
+            "sysroot": {
+              "used": false
+            }
+          }
+        }
+      ],
+      "results": [
+        {
+          "ruleId": "entropy-trace/lib-csprng",
+          "level": "note",
+          "message": {
+            "text": "Entropy-critical sink 'crypto_sign_ed25519_keypair' resolved to LIB_CSPRNG under policy mode 'pr'."
+          },
+          "locations": [
+            {
+              "message": {
+                "text": "Entropy-critical sink 'crypto_sign_ed25519_keypair' resolved to LIB_CSPRNG under policy mode 'pr'."
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/libsodium/crypto_sign/ed25519/ref10/keypair.c"
+                },
+                "region": {
+                  "startLine": 33
+                }
+              }
+            }
+          ],
+          "codeFlows": [
+            {
+              "threadFlows": [
+                {
+                  "locations": [
+                    {
+                      "location": {
+                        "message": {
+                          "text": "hop 0: crypto_sign_ed25519_keypair (c_call)"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "src/libsodium/crypto_sign/ed25519/ref10/keypair.c"
+                          },
+                          "region": {
+                            "startLine": 32
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "message": {
+                          "text": "hop 1: randombytes_buf (c_call) -- resolution: RESOLVED"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "src/libsodium/randombytes/randombytes.c"
+                          },
+                          "region": {
+                            "startLine": 142
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "entropyTrace/sinkTerminal/v1": "catalogue|SEED_GENERATION|crypto_sign_ed25519_keypair|CLASSIFIED|LIB_CSPRNG"
+          }
+        }
+      ]
+    }
+  ]
+}
