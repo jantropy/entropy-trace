@@ -83,3 +83,33 @@ PRNG, time-seeded, constant, user-supplied. No model, no scoring, no heuristics.
 Anything not in the table comes back UNKNOWN rather than a guess, because a wrong
 guess here is worse than admitting the tool doesn't know.
 
+**5. Sink location:** _where does key material actually get generated?_  
+`analysis/sinks.py`. Two ways in: a small YAML catalogue of named entry points
+(`data/sinks.yaml`) for cases with no distinguishing feature to anchor on, and
+structural anchors - a literal constant that only ever shows up at one semantic
+spot in a real wallet codebase. Only one anchor is implemented: BIP-32's
+`"Bitcoin seed"` HMAC key, checked directly against a real tree before writing
+any code for it. A second candidate (BIP-39's salt prefix) was checked the same
+way and never actually appears in production source, so it isn't implemented at
+all rather than faked.
+
+**6. The Python/C boundary:** _the seed call is Python; the bug is in C. How do
+you cross that?_  
+`adapters/micropython.py`. Coldcard's `generate_seed()` calls `ngu.random.bytes`,
+a dotted Python attribute with no source of its own - it's bound to a real C
+function through MicroPython's own module-registration machinery. This module
+walks that machinery backwards: given a dotted name, it resolves the actual C
+function it calls, by recognising the same four struct shapes MicroPython's
+build always produces. Anything outside those four shapes comes back an
+explicit UNKNOWN, never a guess.
+
+**7. The backward slice:** _tying it all together - walk from the sink until you
+hit something classifiable._  
+`analysis/slice.py`. Starts at a sink, and for each call it makes, decides
+whether to cross the FFI boundary, resolve it as a local definition, or hand it
+to the linker-resolution step - checking the registry at every hop before
+following it further. This is the actual trace: sink -> `ngu.random.bytes` ->
+`random_bytes` -> `my_random_bytes` -> `rng_get` -> whichever file wins at link
+time. Every hop that can't be followed comes back an explicit UNKNOWN with a
+reason, never a plausible-looking guess at what happens next.
+

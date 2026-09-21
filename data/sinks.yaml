@@ -1,0 +1,27 @@
+# Entropy Trace sink catalogue.
+#
+# Named entry points that entropytrace.analysis.sinks.load_sink_catalogue()
+# loads directly - for cases with no distinguishing literal constant to
+# anchor on structurally (see sinks.py for the other mechanism, the
+# BIP-32 "Bitcoin seed" structural anchor).
+#
+# `category` must be one of the SinkCategory values in sinks.py. Whether a
+# category is entropy-critical is fixed policy decided in that module, not
+# here - this file only says WHERE a sink is, never whether it matters.
+#
+# Entries carry `file` and `entry_symbol` only, never a line number: the
+# same function moves between lines across commits. Line numbers are
+# always resolved fresh against whatever checkout is actually being
+# analysed, by entropytrace.analysis.sinks.locate_python_catalogue_sink().
+
+- name: generate_seed
+  category: SEED_GENERATION
+  language: python
+  file: shared/seed.py
+  entry_symbol: generate_seed
+  note: >
+    New wallet master-seed generation entry point (Coldcard/firmware).
+    Confirmed present, under this exact name, at
+    948dc108a0a12ea06ec8ee90575609eb3dc90c7b (current master),
+    ca72463709f4e3f8964952039d5caf955f566a87 (patched), and
+    ae88593552403303a1973f1a927095b62cc059af (v5.5.1, vulnerable).
