@@ -1,0 +1,102 @@
+# Entropy Trace source registry - deterministic terminal classification.
+#
+# entropytrace.analysis.registry loads this file, and nothing else decides
+# what a terminal classifies as.
+#
+# match_kind:
+#   function_name  - the hop's own resolved symbol name equals `symbol`
+#                     exactly.
+#   body_contains  - the hop's own preprocessed function body contains
+#                     `pattern` as a literal substring. Used when the
+#                     terminal isn't a further function call at all, but
+#                     inline register or memory access.
+#
+# Every entry below was checked directly against a real tree, or is a
+# well-known host primitive. Nothing here is guessed at.
+# `classes`: HW_TRNG, OS_CSPRNG, LIB_CSPRNG, USER_ENTROPY, NON_CRYPTO_PRNG,
+# CONSTANT, TIME_SEEDED.
+
+- symbol: pyb_rng_yasmarang
+  match_kind: function_name
+  category: NON_CRYPTO_PRNG
+  note: >
+    Yasmarang PRNG (Ilya Levin, public domain), seeded from SysTick and RTC
+    registers - not cryptographically secure. This is what Coldcard's
+    rng_get() falls back to when the hardware RNG path isn't taken.
+
+- symbol: my_yasmarang
+  match_kind: function_name
+  category: NON_CRYPTO_PRNG
+  note: >
+    A second, differently-named Yasmarang variant found in libngu's own
+    random.c (same algorithm family, separate implementation). Not the
+    bug's actual terminal - its output gets XORed with the chip TRNG
+    rather than substituted for it - but a real non-crypto PRNG in this
+    tree worth classifying correctly regardless.
+
+- symbol: RNG->DR
+  match_kind: body_contains
+  pattern: "RNG_TypeDef"
+  category: HW_TRNG
+  note: >
+    STM32 hardware RNG peripheral data register read. The match pattern is
+    "RNG_TypeDef", not the literal text "RNG->DR" - RNG is itself a CMSIS
+    macro that fully expands to a cast expression before this ever runs,
+    so the literal "RNG->DR" never survives preprocessing. RNG_TypeDef is
+    the struct type name for this one peripheral and survives expansion
+    intact. Plain "->DR" was considered and rejected: several other STM32
+    peripherals expose a ->DR field too, so it would false-positive.
+
+- symbol: getrandom
+  match_kind: function_name
+  category: OS_CSPRNG
+  note: "Linux getrandom(2), a common host primitive."
+
+- symbol: "/dev/urandom"
+  match_kind: body_contains
+  pattern: "/dev/urandom"
+  category: OS_CSPRNG
+  note: "Common POSIX OS CSPRNG device node."
+
+- symbol: arc4random
+  match_kind: function_name
+  category: OS_CSPRNG
+  note: "BSD/macOS OS-provided CSPRNG, one of libngu's own backend choices."
+
+- symbol: RAND_bytes
+  match_kind: function_name
+  category: LIB_CSPRNG
+  note: "OpenSSL/BoringSSL CSPRNG entry point."
+
+- symbol: randombytes_buf
+  match_kind: function_name
+  category: LIB_CSPRNG
+  note: "libsodium CSPRNG entry point."
+
+- symbol: mt19937
+  match_kind: body_contains
+  pattern: "mt19937"
+  category: NON_CRYPTO_PRNG
+  note: >
+    C++ std::mt19937 Mersenne Twister - not cryptographically secure. This
+    is the Trust Wallet Core defect: wasm/src/Random.cpp used this before
+    3.1.1.
+
+- symbol: rand
+  match_kind: function_name
+  category: NON_CRYPTO_PRNG
+  note: "C standard library rand()."
+
+- symbol: srand
+  match_kind: function_name
+  category: TIME_SEEDED
+  note: >
+    C standard library srand() - classified TIME_SEEDED on the assumption
+    its argument is time-derived (srand(time(NULL)) is by far the most
+    common real-world pattern). A real finding should still show the
+    actual argument at this hop rather than relying on this label alone.
+
+- symbol: time
+  match_kind: function_name
+  category: TIME_SEEDED
+  note: "C standard library time()."

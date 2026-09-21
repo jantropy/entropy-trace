@@ -75,3 +75,11 @@ because the Coldcard bug was invisible to anyone reading one file at a time
 because it was never a fact about any single file. It was a fact about which of two
 files won at link time.
 
+**4. Classification:** _once we've reached a terminal, what kind of source is it?_  
+`analysis/registry.py`, backed by `data/sources.yaml`. A small, deliberately dumb
+lookup table: a symbol name or a literal substring in its body maps to one of a
+handful of source classes - hardware TRNG, OS CSPRNG, library CSPRNG, non-crypto
+PRNG, time-seeded, constant, user-supplied. No model, no scoring, no heuristics.
+Anything not in the table comes back UNKNOWN rather than a guess, because a wrong
+guess here is worse than admitting the tool doesn't know.
+
