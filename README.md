@@ -58,3 +58,20 @@ Output is a list of translation units, each with its real flags. This layer exis
 because you cannot analyse "the repo" - you analyse "the build." Coldcard's fix was
 literally a file being swapped out of the build set, visible in `make -n` output
 before any analysis runs.
+
+**2. Preprocessing:** _what does this file actually look like once the macros are gone?_  
+`symbols.py`. Runs each translation unit through a real C preprocessor - the host
+compiler standing in for the cross-compiler that may not even be installed - then
+walks the output with tree-sitter to record every function definition and every
+extern declaration, each with its real file and line. Reading the raw source isn't
+enough here: which branch of an `#if` actually compiled is exactly the kind of fact
+Coldcard's bug hinged on, and that only exists after preprocessing, not before it.
+
+**3. Resolution:** _which of these definitions does the linker actually pick?_  
+`resolve.py`. Takes a symbol name and the symbol table from the step above and
+decides what a real linker would have done, without running one: exactly one
+external-linkage definition, none, or more than one. This is particularly important
+because the Coldcard bug was invisible to anyone reading one file at a time
+because it was never a fact about any single file. It was a fact about which of two
+files won at link time.
+
