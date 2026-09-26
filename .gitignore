@@ -6,3 +6,12 @@ __pycache__/
 venv/
 .DS_Store
 .entropytrace-stub/
+
+node_modules/
+dist/
+*.tsbuildinfo
+# tsc -b (tsconfig.node.json's composite project reference) emits a
+# compiled vite.config.js/.d.ts next to the real vite.config.ts source --
+# build output, not source.
+web/ui/vite.config.js
+web/ui/vite.config.d.ts

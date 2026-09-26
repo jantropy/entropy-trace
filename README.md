@@ -218,3 +218,24 @@ The analyser is baked into the Docker image at build time, not read from
 whatever repo the action happens to be pointed at - a repository being
 analysed must never be able to supply the code that analyses it.
 
+## Web UI
+
+`web/` is a small, read-only viewer over `findings.json`: a FastAPI backend
+(`web/api`) that lists and serves whatever findings documents are in a
+directory - the repo's own `fixtures/` by default - and a React + TypeScript
++ Vite frontend (`web/ui`) that renders one as a provenance view: an overall
+verdict, a coverage panel, and a sink list that opens into the actual hop-by-
+hop chain, styled to match `emit/report.py`'s own HTML report. No analysis
+logic lives here; if a value isn't in the JSON, it doesn't appear on screen.
+
+```bash
+cd web && make install && make dev   # http://localhost:5173
+```
+
+Switching the fixture selector between Coldcard's vulnerable and patched
+findings is the whole point of the tool in one interaction: the verdict pill
+flips FAIL to WARN, and `generate_seed`'s chain re-renders with four
+identical hops before diverging into a different file at the fifth,
+terminating at a different, differently-coloured source class. See
+[web/README.md](web/README.md) for the full walkthrough and API surface.
+
