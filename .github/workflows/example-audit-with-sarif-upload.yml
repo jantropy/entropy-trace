@@ -1,0 +1,53 @@
+name: Example — Entropy Trace audit with SARIF upload
+
+# A documented example for downstream consumers of the entropy-trace
+# action, showing the real-world wiring a consuming repo would use: run
+# the action in "audit" mode (UNKNOWN fails, not just warns) against a
+# declared profile, then upload the resulting SARIF to GitHub code
+# scanning so findings show up as annotated, clickable provenance chains
+# on the repository's Security tab.
+#
+# Triggered manually (workflow_dispatch) rather than on every push -
+# self-check.yml is the workflow that actually runs on every push against
+# this repo's own synthetic corpus.
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: 'Profile YAML to analyse (relative to repo root)'
+        required: true
+        default: corpus/synthetic/case1_csprng_swap/vulnerable/ci-profile.yaml
+
+permissions:
+  contents: read
+  security-events: write # required by github/codeql-action/upload-sarif
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Entropy Trace (audit mode)
+        id: entropy-trace
+        # An audit-mode FAIL/WARN is a real, meaningful result - let the
+        # SARIF upload step below run regardless, rather than the whole
+        # job stopping here before code scanning ever sees it.
+        continue-on-error: true
+        uses: ./
+        with:
+          profile: ${{ inputs.profile }}
+          mode: audit
+          output: entropy-trace-findings.json
+
+      - name: Upload SARIF to code scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ steps.entropy-trace.outputs.sarif-path }}
+
+      - name: Fail the job if Entropy Trace found a real problem
+        if: steps.entropy-trace.outcome == 'failure'
+        run: |
+          echo "Entropy Trace overall verdict: ${{ steps.entropy-trace.outputs.overall-verdict }}"
+          exit 1

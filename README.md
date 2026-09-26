@@ -193,3 +193,28 @@ differential test file's own docstring for how to set one up) - those are
 skipped automatically when the checkout isn't present, and marked `slow`
 so a normal test run doesn't wait on them even when it is.
 
+## Running it as a GitHub Action
+
+This repo is itself a Docker-based GitHub Action (`action.yml` + `Dockerfile`
++ `entrypoint.sh`, all at the repo root). Point it at a profile in your own
+repo:
+
+```yaml
+- uses: entropy-trace/entropy-trace@main
+  with:
+    profile: profiles/my-wallet.yaml
+    mode: pr   # or "audit", where an UNKNOWN result fails instead of warns
+```
+
+It writes `findings.json` and a SARIF file, and exposes both paths plus the
+overall verdict as step outputs - `.github/workflows/example-audit-with-
+sarif-upload.yml` shows the full wiring, including uploading the SARIF to
+GitHub code scanning so findings show up as annotated chains on the
+Security tab. `.github/workflows/self-check.yml` runs the action against
+every case in `corpus/synthetic/` on every push, and is the actual
+regression test for the action itself, not just the Python underneath it.
+
+The analyser is baked into the Docker image at build time, not read from
+whatever repo the action happens to be pointed at - a repository being
+analysed must never be able to supply the code that analyses it.
+

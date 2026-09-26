@@ -1,0 +1,43 @@
+name: 'Entropy Trace'
+description: >-
+  Trace a wallet key-material sink's provenance to its resolved entropy
+  source under a declared build profile, and report a pass/fail verdict.
+  Never reports whether your keys "are secure" -- only which source class
+  an entropy-critical sink resolved to, or that it could not be
+  determined.
+author: 'Entropy Trace'
+branding:
+  icon: 'shield'
+  color: 'orange'
+
+inputs:
+  profile:
+    description: >-
+      Path, relative to the repository root, to a profile YAML describing
+      what to analyse (see entropytrace/cli.py's run_profile docstring for
+      the exact shape).
+    required: true
+  mode:
+    description: "Policy mode: 'pr' (default, UNKNOWN warns) or 'audit' (UNKNOWN fails)."
+    required: false
+    default: 'pr'
+  output:
+    description: 'Path, relative to the repository root, to write findings.json to.'
+    required: false
+    default: 'entropy-trace-findings.json'
+
+outputs:
+  overall-verdict:
+    description: "PASS, WARN, or FAIL -- entropytrace.analysis.policy.evaluate()'s overall_verdict."
+  findings-path:
+    description: 'Path to the written findings.json.'
+  sarif-path:
+    description: 'Path to the written SARIF 2.1.0 file.'
+
+runs:
+  using: 'docker'
+  image: 'Dockerfile'
+  args:
+    - ${{ inputs.profile }}
+    - ${{ inputs.mode }}
+    - ${{ inputs.output }}

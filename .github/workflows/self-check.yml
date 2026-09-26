@@ -1,0 +1,72 @@
+name: Self-check (synthetic corpus)
+
+# Runs the entropy-trace Docker action against every synthetic mutation
+# corpus case (corpus/synthetic/) on every push and PR - a real
+# regression test of the whole pipeline, not just a README claim.
+#
+# Each case's own verdict is expected to be FAIL (the vulnerable
+# variants) or PASS (the patched variants, and the deterministic-nonce
+# case, which must never be reported at all) - this workflow is "green"
+# exactly when the action produces the verdict already known to be
+# correct for each case, not when every step happens to exit 0.
+# `continue-on-error` on the action step lets an expected-FAIL case run
+# to completion; the following step is what actually decides whether the
+# job passes.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  self-check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - profile: corpus/synthetic/case1_csprng_swap/vulnerable/ci-profile.yaml
+            expected: FAIL
+          - profile: corpus/synthetic/case1_csprng_swap/patched/ci-profile.yaml
+            expected: PASS
+          - profile: corpus/synthetic/case2_macro_flip/vulnerable/ci-profile.yaml
+            expected: FAIL
+          - profile: corpus/synthetic/case2_macro_flip/patched/ci-profile.yaml
+            expected: PASS
+          - profile: corpus/synthetic/case3_symbol_moved/vulnerable/ci-profile.yaml
+            expected: FAIL
+          - profile: corpus/synthetic/case3_symbol_moved/patched/ci-profile.yaml
+            expected: PASS
+          - profile: corpus/synthetic/case4_deterministic_nonce/ci-profile.yaml
+            expected: PASS
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Entropy Trace
+        id: entropy-trace
+        continue-on-error: true
+        uses: ./
+        with:
+          profile: ${{ matrix.profile }}
+          mode: pr
+          output: entropy-trace-findings.json
+
+      - name: Verify verdict matches the known-correct answer for this case
+        run: |
+          actual="${{ steps.entropy-trace.outputs.overall-verdict }}"
+          expected="${{ matrix.expected }}"
+          echo "profile=${{ matrix.profile }}"
+          echo "expected=$expected actual=$actual"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::verdict mismatch for ${{ matrix.profile }}: expected $expected, got $actual"
+            exit 1
+          fi
+
+      - name: Upload findings.json and SARIF
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: entropy-trace-${{ strategy.job-index }}
+          path: |
+            entropy-trace-findings.json
+            entropy-trace-findings.sarif
+          if-no-files-found: ignore
