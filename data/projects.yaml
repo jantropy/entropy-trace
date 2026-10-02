@@ -1,0 +1,96 @@
+# The runner's allowlist. This file is the security boundary: only a repository
+# listed here is ever cloned, fetched, built or analysed, and only through the
+# profile named here. The web UI sends a project key and a ref; it never sends
+# a URL, a path or a profile.
+#
+# Each entry is profile parameterisation, not discovery. The build knowledge
+# (backend, build.dir, toolchain, sinks) lives in the profile and in `prepare`
+# below and is ours; a ref only chooses which source tree it is applied to.
+#
+#   url          exact GitHub URL (https://github.com/<owner>/<repo>)
+#   profile      base profile; the runner replaces repo_root, commit and label
+#   submodules   submodules the build needs, checked out at the SHA the ref's
+#                own tree pins (not `git submodule update`)
+#   prepare      argv lists run once per checkout before the pipeline (a
+#                configure step); skipped when the checkout is already prepared
+#   build_hints  path facts that explain an empty build set, shown only when
+#                the check holds at the ref that failed
+#   refs         verified refs: refs that were actually run, and where that is
+#                recorded. Any other ref in the same repo is offered as
+#                unverified and may fail.
+
+projects:
+  coldcard:
+    name: "Coldcard firmware"
+    url: https://github.com/Coldcard/firmware
+    profile: profiles/coldcard-vulnerable.yaml
+    summary: >
+      MicroPython hardware wallet. generate_seed() crosses into C through the
+      libngu module; which rng.c wins at link time decides the result.
+    submodules:
+      - path: external/micropython
+        url: https://github.com/Coldcard/micropython
+        nested:
+          - path: lib/stm32lib
+            url: https://github.com/micropython/stm32lib
+      - path: external/libngu
+        url: https://github.com/switck/libngu
+        nested:
+          - path: libs/secp256k1
+            url: https://github.com/bitcoin-core/secp256k1
+          - path: libs/cifra
+            url: https://github.com/ctz/cifra
+          - path: libs/bech32
+            url: https://github.com/sipa/bech32
+    refs:
+      - ref: 2026-07-01T1730-v5.5.1
+        label: "vulnerable - tag 2026-07-01T1730-v5.5.1"
+        source: corpus/coldcard.yaml
+      - ref: ca72463709f4e3f8964952039d5caf955f566a87
+        label: "patched - fixes rng"
+        source: corpus/coldcard.yaml
+
+  trustwallet:
+    name: "Trust Wallet Core"
+    url: https://github.com/trustwallet/wallet-core
+    profile: profiles/trustwallet-vulnerable.yaml
+    summary: >
+      C++ wallet library. Its WASM build seeded std::mt19937 from
+      std::random_device; the fix replaced it with a JavaScript CSPRNG.
+    # The build set comes from a CMake configure (not a build) pointed at the
+    # host compiler: the file selection is real, the flags are a substitution.
+    prepare:
+      - ["tools/download-dependencies"]
+      - ["cmake", "-S", ".", "-B", "build-wasm-attempt",
+         "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON", "-DTW_COMPILE_WASM=ON", "-DTW_UNIT_TESTS=OFF",
+         "-DCMAKE_C_COMPILER=clang", "-DCMAKE_CXX_COMPILER=clang++",
+         "-DCMAKE_OSX_DEPLOYMENT_TARGET=10.15"]
+    build_hints:
+      - missing: CMakeLists.txt
+        says: "There is no top-level CMakeLists.txt at this ref."
+    refs:
+      - ref: 3.1.0
+        label: "vulnerable - tag 3.1.0"
+        source: corpus/trust-wallet-core.yaml
+      - ref: 3.1.1
+        label: "patched - tag 3.1.1"
+        source: corpus/trust-wallet-core.yaml
+
+  libsodium:
+    name: "libsodium"
+    url: https://github.com/jedisct1/libsodium
+    profile: profiles/libsodium.yaml
+    summary: >
+      General-purpose crypto library, the held-out generalisation case: its
+      own keypair generator resolves to a library CSPRNG.
+    # A git checkout has no `configure` (release tarballs do), so generate it.
+    prepare:
+      - ["sh", "-c", "LIBTOOLIZE=$(command -v libtoolize || command -v glibtoolize) ./autogen.sh"]
+      - ["./configure"]
+    build_hints:
+      - missing: src/libsodium/Makefile.am
+        says: "There is no src/libsodium/Makefile.am at this ref."
+    refs:
+      - ref: 1.0.20-RELEASE
+        label: "tag 1.0.20-RELEASE"
+        source: corpus/libsodium.yaml

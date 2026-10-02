@@ -1,13 +1,17 @@
 # Two-command start, or `make dev` for one. See web/README.md.
 
+# The API shells out to the analyser, so it must run under the interpreter that
+# has the analyser's dependencies: the repo's own venv when there is one.
+PYTHON ?= $(if $(wildcard $(CURDIR)/../.venv/bin/python),$(CURDIR)/../.venv/bin/python,python3)
+
 .PHONY: install dev api ui
 
 install:
-	pip install -r api/requirements.txt
+	$(PYTHON) -m pip install -r api/requirements.txt
 	cd ui && npm install
 
 api:
-	cd api && python3 -m uvicorn main:app --reload --port 8000
+	cd api && $(PYTHON) -m uvicorn main:app --reload --port 8000
 
 ui:
 	cd ui && npm run dev

@@ -1,0 +1,176 @@
+"""The allowlist: data/projects.yaml is the runner's one security boundary.
+
+Only a project listed there is ever cloned, fetched, built or analysed. The
+browser sends a project key and a ref and nothing else: never a URL, a path or
+a profile. Anything that touches the disk or starts a subprocess is derived
+from the allowlist entry, not from the request.
+
+Parsing and validation only; this module never runs git.
+"""
+
+import dataclasses
+import os
+import re
+
+import yaml
+
+REPO_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
+DEFAULT_PROJECTS_YAML = os.path.join(REPO_ROOT, "data", "projects.yaml")
+
+# A ref is a branch, tag or SHA: nothing git would read as a revision
+# expression (`HEAD~3`, `a..b`, `@{u}`), as an option (leading `-`), or that a
+# shell could mangle. Commands are argv lists, never a shell, so this is a
+# second layer.
+REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/+-]{0,199}$")
+_BAD_REF_SUBSTRINGS = ("..", "//", "/.", ".lock", "@{")
+_PROJECT_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
+_GITHUB_URL_RE = re.compile(r"^https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
+
+
+class AllowlistError(ValueError):
+    """The allowlist file is malformed. Raised at load time, never swallowed."""
+
+
+class UnknownProject(LookupError):
+    """The requested project key is not in the allowlist."""
+
+
+class InvalidRef(ValueError):
+    """The ref string is not something this runner will pass to git."""
+
+
+@dataclasses.dataclass(frozen=True)
+class VerifiedRef:
+    ref: str
+    label: str
+    source: str  # which corpus file records this ref
+
+
+@dataclasses.dataclass(frozen=True)
+class Submodule:
+    """A submodule the build needs, checked out at the SHA the project's own
+    tree pins (see repo_cache.materialise_submodules)."""
+
+    path: str
+    url: str
+    nested: tuple["Submodule", ...] = ()
+
+
+@dataclasses.dataclass(frozen=True)
+class Project:
+    key: str
+    name: str
+    url: str
+    profile: str  # absolute path to the base profile YAML
+    summary: str
+    refs: tuple[VerifiedRef, ...]
+    submodules: tuple[Submodule, ...]
+    prepare: tuple[tuple[str, ...], ...]  # argv lists, run in the worktree
+    timeout_seconds: int
+    prepare_timeout_seconds: int
+    # Explains a build-set failure. `says` is shown only when the path check
+    # (`exists` / `missing`, inside the checkout) holds for the ref that failed.
+    build_hints: tuple["BuildHint", ...] = ()
+
+
+@dataclasses.dataclass(frozen=True)
+class BuildHint:
+    says: str
+    exists: str | None = None
+    missing: str | None = None
+
+
+def _build_hint(raw: dict, where: str) -> BuildHint:
+    if "says" not in raw or (("exists" in raw) == ("missing" in raw)):
+        raise AllowlistError(f"{where}: a build_hint needs `says` and exactly one of `exists` / `missing`")
+    for field in ("exists", "missing"):
+        path = raw.get(field)
+        if path is not None and (os.path.isabs(path) or ".." in path.split("/")):
+            raise AllowlistError(f"{where}: build_hint path {path!r} must be relative and stay inside the checkout")
+    return BuildHint(raw["says"], raw.get("exists"), raw.get("missing"))
+
+
+def _submodule(raw: dict, where: str) -> Submodule:
+    for field in ("path", "url"):
+        if field not in raw:
+            raise AllowlistError(f"{where}: submodule is missing {field!r}")
+    if not _GITHUB_URL_RE.match(raw["url"]):
+        raise AllowlistError(f"{where}: submodule url {raw['url']!r} is not a plain https://github.com/<owner>/<repo> URL")
+    path = raw["path"]
+    if os.path.isabs(path) or ".." in path.split("/"):
+        raise AllowlistError(f"{where}: submodule path {path!r} must be relative and stay inside the worktree")
+    nested = tuple(_submodule(n, where) for n in raw.get("nested", []))
+    return Submodule(path, raw["url"], nested)
+
+
+def load_projects(path: str | None = None) -> dict[str, Project]:
+    path = path or os.environ.get("ENTROPY_TRACE_PROJECTS_YAML") or DEFAULT_PROJECTS_YAML
+    with open(path) as f:
+        raw = yaml.safe_load(f) or {}
+    entries = raw.get("projects")
+    if not isinstance(entries, dict) or not entries:
+        raise AllowlistError(f"{path}: needs a non-empty top-level `projects` mapping")
+
+    projects: dict[str, Project] = {}
+    for key, entry in entries.items():
+        where = f"{path}: project {key!r}"
+        if not _PROJECT_KEY_RE.match(str(key)):
+            raise AllowlistError(f"{where}: key must be lowercase letters, digits and dashes")
+        for field in ("name", "url", "profile", "refs"):
+            if field not in entry:
+                raise AllowlistError(f"{where}: missing required field {field!r}")
+        if not _GITHUB_URL_RE.match(entry["url"]):
+            raise AllowlistError(f"{where}: url {entry['url']!r} is not a plain https://github.com/<owner>/<repo> URL")
+
+        profile = entry["profile"]
+        if os.path.isabs(profile) or ".." in profile.split("/"):
+            raise AllowlistError(f"{where}: profile {profile!r} must be a repo-relative path")
+        profile_abs = os.path.join(REPO_ROOT, profile)
+        if not os.path.isfile(profile_abs):
+            raise AllowlistError(f"{where}: profile {profile!r} does not exist")
+
+        refs = []
+        for r in entry["refs"]:
+            if not REF_RE.match(str(r.get("ref", ""))):
+                raise AllowlistError(f"{where}: verified ref {r.get('ref')!r} is not a valid ref string")
+            if "label" not in r or "source" not in r:
+                raise AllowlistError(f"{where}: verified ref {r['ref']!r} needs `label` and `source`")
+            refs.append(VerifiedRef(str(r["ref"]), r["label"], r["source"]))
+        if not refs:
+            raise AllowlistError(f"{where}: needs at least one verified ref")
+
+        prepare = []
+        for cmd in entry.get("prepare", []):
+            if not isinstance(cmd, list) or not all(isinstance(a, str) for a in cmd) or not cmd:
+                raise AllowlistError(f"{where}: each prepare step must be an argv list of strings")
+            prepare.append(tuple(cmd))
+
+        projects[key] = Project(
+            key=key,
+            name=entry["name"],
+            url=entry["url"],
+            profile=profile_abs,
+            summary=entry.get("summary", ""),
+            refs=tuple(refs),
+            submodules=tuple(_submodule(s, where) for s in entry.get("submodules", [])),
+            prepare=tuple(prepare),
+            timeout_seconds=int(entry.get("timeout_seconds", 900)),
+            prepare_timeout_seconds=int(entry.get("prepare_timeout_seconds", 1800)),
+            build_hints=tuple(_build_hint(h, where) for h in entry.get("build_hints", [])),
+        )
+    return projects
+
+
+def get_project(projects: dict[str, Project], key: object) -> Project:
+    """Reject anything that is not exactly an allowlisted key, before any work
+    happens: a non-string, a path, a URL and an unknown key all get the same
+    answer."""
+    if not isinstance(key, str) or key not in projects:
+        raise UnknownProject(f"{key!r} is not an allowlisted project")
+    return projects[key]
+
+
+def validate_ref(ref: object) -> str:
+    if not isinstance(ref, str) or not REF_RE.match(ref) or any(bad in ref for bad in _BAD_REF_SUBSTRINGS):
+        raise InvalidRef(f"{ref!r} is not a branch name, tag name or commit SHA")
+    return ref

@@ -1,22 +1,33 @@
 """entropy-trace web API.
 
-Read-only over findings.json: serves files from a directory, lists what's
-available, and accepts an upload. No analysis logic lives here -- every
-byte returned is exactly what a findings.json file already contains. If a
-value is not in the JSON, this API has no way to invent it.
+Two jobs, kept apart:
+
+  - Read-only over result documents: serves files from a directory, lists
+    what's available, and accepts an upload. No analysis logic lives here;
+    every byte returned is exactly what the file already contains.
+  - The runner (/api/projects, /api/runs): runs the existing CLI in a
+    subprocess against a project from data/projects.yaml and a ref of that
+    project's repository. The client sends a project key and a ref, never a
+    path, a URL or a profile. See runner.py.
 
 Run directly: `uvicorn main:app --reload --port 8000` from this
 directory, or see web/README.md for the two-command start against the
 committed fixtures.
 """
 
+import contextlib
 import json
 import os
 import re
+import threading
 
+import repo_cache
+import runner
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from projects import AllowlistError, InvalidRef, UnknownProject, get_project, load_projects
+from pydantic import BaseModel, ConfigDict, Field
 
 # Directory findings.json files are served from and uploaded into.
 # Defaults to the repo's own committed fixtures, so the UI has something
@@ -32,7 +43,18 @@ FINDINGS_DIR = os.environ.get(
 _FINDINGS_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+\.json$")
 _EXCLUDED_NAMES = {"findings.schema.json"}
 
-app = FastAPI(title="Entropy Trace API", description="Read-only API over findings.json documents.")
+
+@contextlib.asynccontextmanager
+async def _lifespan(_app):
+    _warm_cache()
+    yield
+
+
+app = FastAPI(
+    title="Entropy Trace API",
+    description="Read-only API over result documents, plus a runner over an allowlist of projects.",
+    lifespan=_lifespan,
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -73,6 +95,8 @@ def list_findings() -> list[dict]:
                 doc = json.load(f)
         except (OSError, json.JSONDecodeError):
             continue
+        if not isinstance(doc, dict) or "schema_version" not in doc or "coverage" not in doc:
+            continue  # some other JSON file that happens to live in this directory
         out.append(
             {
                 "name": name,
@@ -107,7 +131,7 @@ async def upload_findings(file: UploadFile) -> dict:
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=400, detail=f"not valid JSON: {exc}") from exc
     if "schema_version" not in doc or "coverage" not in doc:
-        raise HTTPException(status_code=400, detail="not a findings.json document (missing schema_version/coverage)")
+        raise HTTPException(status_code=400, detail="not a result document (missing schema_version/coverage)")
 
     os.makedirs(FINDINGS_DIR, exist_ok=True)
     dest = os.path.join(FINDINGS_DIR, os.path.basename(file.filename))
@@ -119,3 +143,104 @@ async def upload_findings(file: UploadFile) -> dict:
 @app.get("/api/health")
 def health() -> dict:
     return {"status": "ok", "findings_dir": FINDINGS_DIR}
+
+
+# --- the runner -------------------------------------------------------------
+
+_projects_cache: dict | None = None
+_projects_guard = threading.Lock()
+
+
+def _projects() -> dict:
+    """The allowlist, loaded once. A broken one is a 503 for the runner
+    endpoints only; the fixture viewer keeps working."""
+    global _projects_cache
+    with _projects_guard:
+        if _projects_cache is None:
+            try:
+                _projects_cache = load_projects()
+            except (AllowlistError, OSError) as exc:
+                raise HTTPException(status_code=503, detail=f"project allowlist unavailable: {exc}") from exc
+        return _projects_cache
+
+
+def _warm_cache() -> None:
+    """Clone every allowlisted project and prepare its verified refs in the
+    background, so nothing hits the network mid-demo. ENTROPY_TRACE_WARM=0
+    turns it off (the tests do)."""
+    if os.environ.get("ENTROPY_TRACE_WARM", "1") == "0":
+        return
+    try:
+        projects = _projects()
+    except HTTPException:
+        return
+    threading.Thread(target=repo_cache.warm, args=(projects, print), daemon=True).start()
+
+
+@app.get("/api/projects")
+def list_projects() -> dict:
+    projects = _projects()
+    out = []
+    for p in projects.values():
+        status = repo_cache.get_status(p.key)
+        out.append(
+            {
+                "key": p.key,
+                "name": p.name,
+                "url": p.url,
+                "summary": p.summary,
+                "verified_refs": [{"ref": r.ref, "label": r.label} for r in p.refs],
+                "cache": {"state": status.state, "detail": status.detail},
+            }
+        )
+    return {"projects": out, "verified_count": len(out)}
+
+
+class RunRequest(BaseModel):
+    # Anything beyond these two fields (a path, a URL, a profile) is a 422,
+    # not silently ignored.
+    model_config = ConfigDict(extra="forbid")
+
+    project: str = Field(max_length=64)
+    ref: str = Field(max_length=200)
+
+
+@app.post("/api/runs", status_code=202)
+def create_run(req: RunRequest) -> dict:
+    projects = _projects()
+    try:
+        project = get_project(projects, req.project)
+    except UnknownProject as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        sha, verified, verified_label = runner.resolve_for_run(project, req.ref)
+    except InvalidRef as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except runner.RefRejected as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except runner.NotReady as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    job = runner.start_run(project, req.ref, sha, verified, verified_label)
+    return {"id": job.id, "verified": verified}
+
+
+def _job_or_404(run_id: str) -> runner.Job:
+    job = runner.get_job(run_id) if re.fullmatch(r"[0-9a-f]{12}", run_id) else None
+    if job is None:
+        raise HTTPException(status_code=404, detail="no such run")
+    return job
+
+
+@app.get("/api/runs/{run_id}")
+def get_run(run_id: str, since: int = 0) -> dict:
+    """Status, stage and log lines from `since` on. Polled, not streamed:
+    one plain request per second is the version that cannot half-fail."""
+    return _job_or_404(run_id).snapshot(max(0, since))
+
+
+@app.get("/api/runs/{run_id}/findings")
+def get_run_findings(run_id: str) -> JSONResponse:
+    job = _job_or_404(run_id)
+    if job.status != "succeeded" or job.findings is None:
+        raise HTTPException(status_code=409, detail=f"run is {job.status}; there is no result to return")
+    return JSONResponse(content=job.findings)
