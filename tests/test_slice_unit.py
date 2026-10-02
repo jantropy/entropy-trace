@@ -9,6 +9,10 @@ from entropytrace.analysis.sinks import Sink, SinkCategory
 from entropytrace.analysis.slice import (
     _dotted_calls_in_order,
     _find_python_function,
+    _locate_package_init,
+    _locate_python_sibling_module,
+    _resolve_ffi_with_fallbacks,
+    _resolve_import_alias,
     _skip_path,
     _top_level_source_assignments,
     slice_from_sink,
@@ -372,3 +376,228 @@ def test_slice_from_sink_single_source_python_sink_is_unchanged_by_mix_support(m
     )
     assert result.status == "CLASSIFIED"
     assert result.classification.category == SourceClass.HW_TRNG
+
+
+# --- FFI-resolution fallbacks: an import-aliased re-export, or a plain
+# Python wrapper module, standing between the dotted call and the real
+# C-registered module.
+
+
+def _write(path, content):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        f.write(content)
+
+
+def test_resolve_import_alias_follows_one_level_of_reexport(tmp_path):
+    """`from trezor.crypto import random` inside a function, where
+    trezor/crypto/__init__.py itself re-exports `random` from
+    `trezorcrypto` -- must follow exactly one level through that
+    __init__.py and return the real dotted root."""
+    repo = str(tmp_path)
+    rel_file = "src/apps/management/reset_device/__init__.py"
+    _write(
+        os.path.join(repo, rel_file),
+        "async def reset_device():\n"
+        "    from trezor.crypto import random\n"
+        "    int_entropy = random.bytes(32, True)\n",
+    )
+    _write(
+        os.path.join(repo, "src/trezor/crypto/__init__.py"),
+        "from trezorcrypto import (\n    random,\n)\n",
+    )
+    func = _find_python_function(repo, rel_file, "reset_device")
+    assert func is not None
+    assert _resolve_import_alias(repo, rel_file, func, "random") == "trezorcrypto.random"
+
+
+def test_resolve_import_alias_returns_none_when_root_not_imported(tmp_path):
+    """A dotted call's root that isn't bound by any ImportFrom in this file
+    at all must return None, not guess."""
+    repo = str(tmp_path)
+    rel_file = "task.py"
+    _write(os.path.join(repo, rel_file), "def new_seed_task():\n    common.noise.random_bytes(seed)\n")
+    func = _find_python_function(repo, rel_file, "new_seed_task")
+    assert _resolve_import_alias(repo, rel_file, func, "common") is None
+
+
+def test_locate_package_init_climbs_ancestors_lexically(tmp_path):
+    """Purely lexical: finds trezor/crypto/__init__.py by climbing from
+    the importing file's own directory, no sys.path emulation."""
+    repo = str(tmp_path)
+    _write(os.path.join(repo, "core/src/apps/management/reset_device/__init__.py"), "")
+    _write(os.path.join(repo, "core/src/trezor/crypto/__init__.py"), "")
+    result = _locate_package_init(
+        repo, "core/src/apps/management/reset_device/__init__.py", "trezor.crypto"
+    )
+    assert result == "core/src/trezor/crypto/__init__.py"
+
+
+def test_locate_python_sibling_module_finds_same_directory_file(tmp_path):
+    """The exact real shape: Coldcard's shared/callgate.py sits next to
+    shared/seed.py, the importing file."""
+    repo = str(tmp_path)
+    _write(os.path.join(repo, "shared/seed.py"), "")
+    _write(os.path.join(repo, "shared/callgate.py"), "")
+    assert _locate_python_sibling_module(repo, "shared/seed.py", "callgate") == "shared/callgate.py"
+
+
+def test_locate_python_sibling_module_returns_none_when_no_match(tmp_path):
+    repo = str(tmp_path)
+    _write(os.path.join(repo, "shared/seed.py"), "")
+    assert _locate_python_sibling_module(repo, "shared/seed.py", "callgate") is None
+
+
+def test_resolve_ffi_with_fallbacks_detours_through_plain_wrapper_module(tmp_path, monkeypatch):
+    """`import callgate; callgate.read_rng(1)` where `callgate` isn't a
+    registered C module, but a sibling callgate.py whose own `read_rng`
+    calls a real, FFI-resolvable `ckcc.gate` -- must detour into it and
+    return the inner, resolved edge plus a hop recording the detour."""
+    repo = str(tmp_path)
+    _write(
+        os.path.join(repo, "shared/seed.py"),
+        "def generate_seed():\n    import callgate\n    a = callgate.read_rng(1)\n",
+    )
+    _write(
+        os.path.join(repo, "shared/callgate.py"),
+        "def read_rng(source=2):\n    return ckcc.gate(26, arg, source)\n",
+    )
+    func = _find_python_function(repo, "shared/seed.py", "generate_seed")
+
+    def fake_resolve(dotted, build_set, stub_dir):
+        if dotted == "ckcc.gate":
+            return FFIEdge("ckcc.gate", "RESOLVED", c_symbol="sec_gate", tu="modckcc.c")
+        return FFIEdge(dotted, "UNKNOWN", reason=f"no MP_REGISTER_MODULE found for {dotted.split('.')[0]!r}")
+
+    monkeypatch.setattr(slice_mod, "resolve_ffi_path", fake_resolve)
+    edge, extra_hops = _resolve_ffi_with_fallbacks(
+        "callgate.read_rng", "shared/seed.py", func, repo, [], str(tmp_path / "stub")
+    )
+    assert edge.status == "RESOLVED"
+    assert edge.py_path == "ckcc.gate"
+    assert edge.c_symbol == "sec_gate"
+    assert len(extra_hops) == 1
+    assert extra_hops[0].file == "shared/callgate.py"
+    assert "detour" in extra_hops[0].detail
+
+
+def test_resolve_ffi_with_fallbacks_returns_original_unknown_when_nothing_works(tmp_path, monkeypatch):
+    """An instance-attribute path neither fallback can handle: the
+    original, honest UNKNOWN edge comes back unchanged."""
+    repo = str(tmp_path)
+    _write(os.path.join(repo, "task.py"), "def new_seed_task():\n    common.noise.random_bytes(seed)\n")
+    func = _find_python_function(repo, "task.py", "new_seed_task")
+    monkeypatch.setattr(
+        slice_mod, "resolve_ffi_path",
+        lambda dotted, build_set, stub_dir: FFIEdge(
+            dotted, "UNKNOWN", reason="no MP_REGISTER_MODULE found for 'common'"
+        ),
+    )
+    edge, extra_hops = _resolve_ffi_with_fallbacks(
+        "common.noise.random_bytes", "task.py", func, repo, [], str(tmp_path / "stub")
+    )
+    assert edge.status == "UNKNOWN"
+    assert edge.reason == "no MP_REGISTER_MODULE found for 'common'"
+    assert extra_hops == []
+
+
+# --- A Python-level dotted call classified directly by name, with no
+# FFI/C resolution at all.
+
+_USER_ENTROPY_REGISTRY = REGISTRY + [
+    RegistryEntry("hashlib.sha256", "function_name", "hashlib.sha256", SourceClass.USER_ENTROPY),
+]
+
+
+def test_slice_from_sink_classifies_python_call_directly_by_registry_name(tmp_path, monkeypatch):
+    """A dotted call the registry recognises by name terminates the walk
+    right there, with no FFI/C resolution at all -- mirroring how a bare,
+    source-less C library call is already classified by name in
+    walk_c_chain."""
+    py_file = tmp_path / "dice_rolls.py"
+    py_file.write_text(
+        "def new_key(self):\n"
+        "    len_mnemonic = self.choose_len_mnemonic()\n"
+        "    while True:\n"
+        "        entropy_bytes = entropy.encode()\n"
+        "        return hashlib.sha256(entropy_bytes).digest()\n"
+    )
+    monkeypatch.setattr(
+        slice_mod, "resolve_ffi_path",
+        lambda dotted, build_set, stub_dir: FFIEdge(
+            dotted, "UNKNOWN", reason=f"no MP_REGISTER_MODULE found for {dotted.split('.')[0]!r}"
+        ),
+    )
+    sink = Sink(
+        name="new_key_from_dice", category=SinkCategory.SEED_GENERATION, entropy_critical=True,
+        language="python", file="dice_rolls.py", line=1, entry_symbol="new_key",
+    )
+    idx = build_symbol_index([], str(tmp_path / "stub"))
+    result = slice_from_sink(sink, str(tmp_path), [], idx, _USER_ENTROPY_REGISTRY, str(tmp_path / "stub"))
+    assert result.status == "CLASSIFIED"
+    assert result.classification.category == SourceClass.USER_ENTROPY
+    assert result.hops[-1].kind == "python_call"
+    assert result.hops[-1].symbol == "hashlib.sha256"
+
+
+def test_slice_from_sink_mix_falls_back_when_every_guessed_source_is_unknown(tmp_path, monkeypatch):
+    """A large function's first top-level `var = a.b.c(...)` assignment
+    can be a completely unrelated call (a menu/config helper here) that
+    matches _top_level_source_assignments's own shape by coincidence,
+    with the real entropy call nested deeper and never itself a top-level
+    statement. When every guessed top-level candidate is UNKNOWN, the
+    walk must fall back to the full per-call search instead of reporting
+    a misleading single UNKNOWN result that never even tried the real
+    call."""
+    py_file = tmp_path / "capture_entropy.py"
+    py_file.write_text(
+        "def capture(self):\n"
+        "    img_bytes = img.to_bytes()\n"
+        "    if True:\n"
+        "        return hashlib.sha256(img_bytes).digest()\n"
+    )
+    monkeypatch.setattr(
+        slice_mod, "resolve_ffi_path",
+        lambda dotted, build_set, stub_dir: FFIEdge(
+            dotted, "UNKNOWN", reason=f"no MP_REGISTER_MODULE found for {dotted.split('.')[0]!r}"
+        ),
+    )
+    sink = Sink(
+        name="new_key_from_snapshot", category=SinkCategory.SEED_GENERATION, entropy_critical=True,
+        language="python", file="capture_entropy.py", line=1, entry_symbol="capture",
+    )
+    idx = build_symbol_index([], str(tmp_path / "stub"))
+    result = slice_from_sink(sink, str(tmp_path), [], idx, _USER_ENTROPY_REGISTRY, str(tmp_path / "stub"))
+    assert result.status == "CLASSIFIED"
+    assert result.classification.category == SourceClass.USER_ENTROPY
+
+
+def test_slice_from_sink_mix_primary_is_first_classified_contribution(tmp_path, monkeypatch):
+    """When a genuine mix does have more than one top-level candidate and
+    at least one classifies, the headline status/classification must
+    reflect the first CLASSIFIED contribution, not necessarily
+    contributions[0]."""
+    py_file = tmp_path / "capture_entropy.py"
+    py_file.write_text(
+        "def capture(self):\n"
+        "    img_bytes = img.to_bytes()\n"
+        "    shannon_16b = shannon.entropy_img16b(img_bytes)\n"
+        "    hasher = hashlib.sha256()\n"
+        "    return hasher\n"
+    )
+    monkeypatch.setattr(
+        slice_mod, "resolve_ffi_path",
+        lambda dotted, build_set, stub_dir: FFIEdge(
+            dotted, "UNKNOWN", reason=f"no MP_REGISTER_MODULE found for {dotted.split('.')[0]!r}"
+        ),
+    )
+    sink = Sink(
+        name="new_key_from_snapshot", category=SinkCategory.SEED_GENERATION, entropy_critical=True,
+        language="python", file="capture_entropy.py", line=1, entry_symbol="capture",
+    )
+    idx = build_symbol_index([], str(tmp_path / "stub"))
+    result = slice_from_sink(sink, str(tmp_path), [], idx, _USER_ENTROPY_REGISTRY, str(tmp_path / "stub"))
+    assert len(result.contributions) == 3
+    assert [c.status for c in result.contributions] == ["UNKNOWN", "UNKNOWN", "CLASSIFIED"]
+    assert result.status == "CLASSIFIED"
+    assert result.classification.category == SourceClass.USER_ENTROPY

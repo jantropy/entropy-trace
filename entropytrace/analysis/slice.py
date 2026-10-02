@@ -81,10 +81,16 @@ def _skip_path(file_: str) -> bool:
 
 @dataclasses.dataclass
 class Hop:
-    kind: str  # "python_sink", "ffi", "c_call"
+    kind: str  # "python_sink", "ffi", "c_call", "python_call"
     symbol: str
     file: str | None
     line: int | None
+    # "python_call" is a dotted Python call classified directly by name
+    # against the registry, with no FFI/C resolution at all (e.g.
+    # hashlib.sha256(entropy_bytes), terminating in USER_ENTROPY).
+    # `detail` says which registry entry matched, mirroring how a bare,
+    # source-less C library call (e.g. getrandom()) is already reported
+    # when walk_c_chain classifies a symbol by name alone.
     detail: str = ""
 
 
@@ -196,6 +202,176 @@ def _find_python_function(repo_root: str, rel_file: str, func_name: str):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == func_name:
             return node
     return None
+
+
+def _module_ast(repo_root: str, rel_file: str):
+    """Parse `rel_file` fresh, for the two name-resolution helpers below
+    that need the whole module (an import can sit at module level, outside
+    any function `_find_python_function` already handed back a node for).
+    Returns None if the file can't be read."""
+    path = os.path.join(repo_root, rel_file)
+    try:
+        with open(path, errors="replace") as f:
+            source = f.read()
+    except OSError:
+        return None
+    return ast.parse(source, filename=rel_file)
+
+
+def _import_from_binding(search_node, local_name: str) -> tuple[str, str] | None:
+    """Search `search_node` (a function body or a whole module) for an
+    ast.ImportFrom that binds `local_name` - e.g. `from trezor.crypto
+    import random` binds "random" to ("trezor.crypto", "random");
+    `from trezorcrypto import random as rng` binds "rng" to
+    ("trezorcrypto", "random"). A plain ast.walk finds a function-scoped
+    import exactly like a module-level one - MicroPython's own convention
+    leans heavily on function-scoped imports for RAM conservation. Returns
+    None if `local_name` is never bound by any ImportFrom in this subtree
+    - a bare `import X` is a different shape (see
+    `_locate_python_sibling_module`)."""
+    for node in ast.walk(search_node):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            for alias in node.names:
+                if (alias.asname or alias.name) == local_name:
+                    return (node.module, alias.name)
+    return None
+
+
+def _locate_package_init(repo_root: str, from_file: str, dotted_module: str) -> str | None:
+    """Purely lexical search for `dotted_module`'s own __init__.py inside
+    this checkout: climb `from_file`'s own directory tree looking for an
+    ancestor that contains `dotted_module`'s first path segment as a
+    subdirectory (e.g. an ancestor containing a trezor/ directory, for
+    dotted_module="trezor.crypto"), then descend the rest of the dotted
+    path under it. No sys.path emulation, no site-packages - returns None
+    if this checkout's layout doesn't match that shape."""
+    segments = dotted_module.split(".")
+    current = os.path.dirname(from_file)
+    while True:
+        if os.path.isdir(os.path.join(repo_root, current, segments[0])):
+            init_rel = os.path.join(current, *segments, "__init__.py")
+            return init_rel if os.path.isfile(os.path.join(repo_root, init_rel)) else None
+        parent = os.path.dirname(current)
+        if parent == current:
+            return None
+        current = parent
+
+
+def _resolve_import_alias(repo_root: str, rel_file: str, func_node, root: str) -> str | None:
+    """The cheapest of the two FFI-binder gaps this handles: an import-
+    aliased re-export, e.g. `from trezor.crypto import random` then
+    `random.bytes(...)`, where `random` is really `trezorcrypto`'s own
+    registered module, two import hops away. Checks the enclosing
+    function's own (usually function-scoped) imports first, then the
+    whole module's, for a binding of `root`; if found, follows exactly
+    one further level through the imported module's own __init__.py, in
+    case it's itself a re-export (trezor/crypto/__init__.py's own `from
+    trezorcrypto import random`) - no more than one level. Returns a real
+    dotted root to retry FFI resolution with (e.g. "trezorcrypto.random"),
+    or None if `root` isn't bound by any ImportFrom reachable from this
+    file at all."""
+    binding = _import_from_binding(func_node, root)
+    if binding is None:
+        module_tree = _module_ast(repo_root, rel_file)
+        if module_tree is None:
+            return None
+        binding = _import_from_binding(module_tree, root)
+    if binding is None:
+        return None
+    module_name, real_name = binding
+
+    init_rel = _locate_package_init(repo_root, rel_file, module_name)
+    if init_rel is not None:
+        init_tree = _module_ast(repo_root, init_rel)
+        if init_tree is not None:
+            inner = _import_from_binding(init_tree, real_name)
+            if inner is not None:
+                inner_module, inner_name = inner
+                return f"{inner_module}.{inner_name}"
+    return f"{module_name}.{real_name}"
+
+
+def _locate_python_sibling_module(repo_root: str, from_file: str, module_name: str) -> str | None:
+    """The second FFI-binder gap this handles: a bare `import module_name`
+    where `module_name` is a plain Python source file, not a registered C
+    module (e.g. a wrapper module that sits in the same directory as the
+    importing file). Checked first in `from_file`'s own directory, then
+    each ancestor up to `repo_root`, purely lexically. Returns a
+    repo_root-relative path to `module_name.py`, or None if no such file
+    exists anywhere on that ancestor chain."""
+    current = os.path.dirname(from_file)
+    while True:
+        candidate = os.path.join(current, module_name + ".py")
+        if os.path.isfile(os.path.join(repo_root, candidate)):
+            return candidate
+        parent = os.path.dirname(current)
+        if parent == current:
+            return None
+        current = parent
+
+
+def _resolve_ffi_with_fallbacks(
+    dotted: str,
+    rel_file: str,
+    func_node,
+    repo_root: str,
+    build_set: list[TranslationUnit],
+    stub_dir: str,
+    depth: int = 0,
+    max_depth: int = 2,
+):
+    """Try direct FFI resolution first; on failure, try an import-alias
+    resolution (cheapest, tried first) then a plain-Python-wrapper-module
+    resolution (re-entering the SAME dotted-call walk one level deeper
+    rather than writing a second walker), stopping at whichever succeeds.
+    Returns (edge, extra_hops): `extra_hops` records any Python-level
+    detour actually taken (e.g. through a wrapper module's own function)
+    so the provenance chain shows it - empty for a direct hit or an
+    import-alias substitution, since neither leaves this file.
+    `edge.py_path` reflects whatever dotted path actually resolved, not
+    necessarily the original `dotted` argument.
+
+    A dotted call rooted at an *instance attribute* of a C-registered
+    class (not a module, not a plain wrapper file) isn't attempted here -
+    that needs type inference neither of these two fallbacks do. If
+    nothing resolves, the original direct edge is returned unchanged,
+    honest UNKNOWN reason and all."""
+    edge = resolve_ffi_path(dotted, build_set, stub_dir)
+    if edge.status == "RESOLVED":
+        return edge, []
+
+    root, _, rest = dotted.partition(".")
+
+    real_root = _resolve_import_alias(repo_root, rel_file, func_node, root)
+    if real_root is not None:
+        aliased_path = f"{real_root}.{rest}" if rest else real_root
+        aliased_edge = resolve_ffi_path(aliased_path, build_set, stub_dir)
+        if aliased_edge.status == "RESOLVED":
+            return aliased_edge, []
+
+    if depth < max_depth and rest:
+        wrapper_rel = _locate_python_sibling_module(repo_root, rel_file, root)
+        if wrapper_rel is not None:
+            wrapper_func_name, _, _wrapper_rest = rest.partition(".")
+            wrapper_func = _find_python_function(repo_root, wrapper_rel, wrapper_func_name)
+            if wrapper_func is not None:
+                for inner_dotted, _inner_lineno in _dotted_calls_in_order(wrapper_func):
+                    inner_edge, inner_hops = _resolve_ffi_with_fallbacks(
+                        inner_dotted, wrapper_rel, wrapper_func, repo_root,
+                        build_set, stub_dir, depth=depth + 1, max_depth=max_depth,
+                    )
+                    if inner_edge.status == "RESOLVED":
+                        detour_hop = Hop(
+                            "python_sink", wrapper_func_name, wrapper_rel, wrapper_func.lineno,
+                            detail=(
+                                f"detour: {dotted!r} is a plain Python wrapper "
+                                f"function ({wrapper_rel}), not a C module - "
+                                "re-entered the Python walk inside it"
+                            ),
+                        )
+                        return inner_edge, [detour_hop] + inner_hops
+
+    return edge, []
 
 
 # --- C-side: local-TU-first call resolution, then registry, then extern ---
@@ -511,30 +687,74 @@ def slice_from_sink(
         # completely independently - see Contribution's own docstring.
         contributions = [
             _walk_one_python_source(
-                dotted, lineno, sink_hop, sink, build_set, symbol_index, registry, stub_dir,
+                dotted, lineno, sink_hop, sink, repo_root, func_node, build_set,
+                symbol_index, registry, stub_dir,
             )
             for _varname, dotted, lineno in sources
         ]
-        primary = contributions[0]
-        return SliceResult(
-            sink, primary.hops, primary.status, primary.classification,
-            primary.unknown_reason, contributions=contributions,
-        )
+        # A real, generic gap: _top_level_source_assignments's own
+        # heuristic ("any top-level var = a.b.c(...) is a candidate
+        # independent source") holds for small, entropy-focused sink
+        # functions, but a large, UI-driving entry point can have an
+        # unrelated first top-level assignment (a menu/config call) that
+        # happens to match the same shape, with the real entropy call
+        # nested much deeper and never itself a top-level statement. When
+        # NONE of the guessed candidates resolved to anything at all
+        # (every one UNKNOWN - not merely classified as weak, which still
+        # needs to report as a genuine, informative FAIL), the
+        # heuristic's own premise didn't hold for this function - fall
+        # through to the broader per-call walk below instead of
+        # returning a result that only reflects an irrelevant first
+        # statement. A genuine mix always has at least one CLASSIFIED
+        # contribution and is unaffected.
+        if any(c.status == "CLASSIFIED" for c in contributions):
+            # The headline/top-level status is the first CLASSIFIED
+            # contribution, not necessarily contributions[0] - an
+            # unclassifiable candidate that happens to sort before the
+            # real, classified one shouldn't make the headline result say
+            # UNKNOWN when a real classification exists anywhere in the
+            # mix.
+            primary = next((c for c in contributions if c.status == "CLASSIFIED"), contributions[0])
+            return SliceResult(
+                sink, primary.hops, primary.status, primary.classification,
+                primary.unknown_reason, contributions=contributions,
+            )
 
     # Fallback: no top-level assignment shape was found (e.g. the entropy
-    # call sits directly in a return with no intermediate variable) - try
-    # every dotted call in the function in source order, stopping at the
-    # first one that actually resolves over FFI. A sink with exactly this
-    # shape only ever had one real source to begin with, so this remains
-    # a single-source result.
+    # call sits directly in a return with no intermediate variable), or
+    # every guessed top-level candidate above was a dead end - try every
+    # dotted call in the function in source order, stopping at the first
+    # one that actually resolves. A sink with exactly this shape only
+    # ever had one real source to begin with, so this remains a
+    # single-source result.
     hops: list[Hop] = [sink_hop]
     calls = _dotted_calls_in_order(func_node)
     ffi_attempts = []
     for dotted, lineno in calls:
-        edge = resolve_ffi_path(dotted, build_set, stub_dir)
+        # Check the registry by name before attempting FFI resolution at
+        # all - the same "a name match ends the walk here" rule
+        # walk_c_chain already applies to a bare, source-less C library
+        # call (e.g. getrandom()), extended to the Python side. Scoped by
+        # data, not code: only a dotted name a profile's own registry (or
+        # the shared data/sources.yaml) actually lists gets classified
+        # this way, so this changes nothing for any sink whose calls
+        # don't match an existing entry.
+        direct_cls = classify_by_name(dotted, registry)
+        if direct_cls is not None:
+            hops.append(
+                Hop("python_call", dotted, sink.file, lineno, detail=f"matched registry entry {dotted!r} by name")
+            )
+            return _single_source_result(sink, dotted, hops, "CLASSIFIED", classification=direct_cls)
+        edge, extra_hops = _resolve_ffi_with_fallbacks(
+            dotted, sink.file, func_node, repo_root, build_set, stub_dir
+        )
         ffi_attempts.append((dotted, edge.status, edge.reason))
         if edge.status == "RESOLVED":
-            hops.append(Hop("ffi", dotted, sink.file, lineno, detail=f"-> {edge.c_symbol}"))
+            hops.extend(extra_hops)
+            detail = f"-> {edge.c_symbol}"
+            if edge.py_path != dotted:
+                detail = f"-> {edge.c_symbol} (resolved via {edge.py_path!r})"
+            hops.append(Hop("ffi", dotted, sink.file, lineno, detail=detail))
             # The FFI resolver already pinpointed the TU that defines
             # edge.c_symbol (that's how it found the wrapper struct in
             # the first place) - look there first via _resolve_c_call's
@@ -575,6 +795,8 @@ def _walk_one_python_source(
     lineno: int,
     sink_hop: Hop,
     sink: Sink,
+    repo_root: str,
+    func_node,
     build_set: list[TranslationUnit],
     symbol_index: SymbolIndex,
     registry: list[RegistryEntry],
@@ -587,13 +809,20 @@ def _walk_one_python_source(
     failure mode becomes an UNKNOWN Contribution with a reason naming
     exactly what was tried, same as everywhere else in this module."""
     hops = [sink_hop]
-    edge = resolve_ffi_path(dotted, build_set, stub_dir)
+    direct_cls = classify_by_name(dotted, registry)
+    if direct_cls is not None:
+        hops = hops + [Hop("python_call", dotted, sink.file, lineno, detail=f"matched registry entry {dotted!r} by name")]
+        return Contribution(dotted, hops, "CLASSIFIED", classification=direct_cls)
+    edge, extra_hops = _resolve_ffi_with_fallbacks(dotted, sink.file, func_node, repo_root, build_set, stub_dir)
     if edge.status != "RESOLVED":
         return Contribution(
             dotted, hops, "UNKNOWN",
             unknown_reason=f"{dotted!r} did not resolve over FFI: {edge.reason}",
         )
-    hops = hops + [Hop("ffi", dotted, sink.file, lineno, detail=f"-> {edge.c_symbol}")]
+    detail = f"-> {edge.c_symbol}"
+    if edge.py_path != dotted:
+        detail = f"-> {edge.c_symbol} (resolved via {edge.py_path!r})"
+    hops = hops + extra_hops + [Hop("ffi", dotted, sink.file, lineno, detail=detail)]
     text_cache: dict = {}
     start, how = _resolve_c_call(edge.tu, edge.c_symbol, build_set, symbol_index, stub_dir, text_cache)
     if start is None:

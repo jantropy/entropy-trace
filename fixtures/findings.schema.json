@@ -119,8 +119,8 @@
           "index": {"type": "integer", "minimum": 0},
           "kind": {
             "type": "string",
-            "enum": ["python_sink", "ffi", "c_call"],
-            "description": "python_sink: the originating sink function. ffi: a Python-to-C boundary crossing. c_call: a plain C function call."
+            "enum": ["python_sink", "ffi", "c_call", "python_call"],
+            "description": "python_sink: the originating sink function. ffi: a Python-to-C boundary crossing. c_call: a plain C function call. python_call: a dotted Python call classified directly by name against the registry, with no FFI/C resolution at all."
           },
           "symbol": {"type": "string"},
           "file": {"type": ["string", "null"]},

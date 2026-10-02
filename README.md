@@ -109,6 +109,17 @@ place and supplies the make variables Coldcard's build always passes, so the
 generic `make -n` backend from layer 1 can run against Coldcard's checkout
 without any of that being layer 1's problem.
 
+A dotted call doesn't always point straight at a registered C module, either.
+`analysis/slice.py`'s `_resolve_ffi_with_fallbacks` tries two further shapes
+before giving up: an import-aliased re-export (`from trezor.crypto import
+random` where `trezor.crypto` itself just re-exports `trezorcrypto`'s own
+module one level down), and a plain Python wrapper file sitting next to the
+caller (Coldcard's `callgate.py`) - re-entering the same dotted-call walk one
+level deeper inside it rather than a second, separate walker. And a dotted
+call can also terminate without ever crossing into C at all: if the registry
+recognises it by name (e.g. `hashlib.sha256`), the walk stops right there,
+classified, the same way a bare C library call already does in `walk_c_chain`.
+
 **7. The backward slice:** _tying it all together - walk from the sink until you
 hit something classifiable._  
 `analysis/slice.py`. Starts at a sink, and for each call it makes, decides
