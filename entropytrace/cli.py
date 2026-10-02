@@ -94,10 +94,11 @@ def _prefix_build_dir(path: str | None, build_dir: str) -> str | None:
 
 def _normalize_build_dir_paths(chains: list[dict], sinks: list, build_dir: str) -> None:
     """Rebase every path-bearing field in a findings.json chains list in
-    place: each entry's own file, and every hop's file inside its chain.
-    Not applied to config_values[].file (already repo_root-relative by
-    definition) or target_macros (relative to this project's own root, a
-    different path space entirely)."""
+    place: each entry's own file, and every hop's file inside its chain
+    (and inside a mix's own per-contribution chains). Not applied to
+    config_values[].file (already repo_root-relative by definition) or
+    target_macros (relative to this project's own root, a different path
+    space entirely)."""
     if not build_dir:
         return
     # Only a C-language sink's own file, and a c_call hop's file, are ever
@@ -108,6 +109,10 @@ def _normalize_build_dir_paths(chains: list[dict], sinks: list, build_dir: str) 
         for hop in entry["chain"]:
             if hop["kind"] == "c_call":
                 hop["file"] = _prefix_build_dir(hop.get("file"), build_dir)
+        for contribution in entry.get("contributions") or []:
+            for hop in contribution["chain"]:
+                if hop["kind"] == "c_call":
+                    hop["file"] = _prefix_build_dir(hop.get("file"), build_dir)
 
 
 def run_profile(profile_path: str, mode: str = "pr", stub_dir: str | None = None) -> dict:
@@ -149,6 +154,26 @@ def run_profile(profile_path: str, mode: str = "pr", stub_dir: str | None = None
             "line": sink.line,
             "status": result.status,
             "chain": _serialize_chain(result.hops),
+            # Every sink's full set of independent entropy sources, always
+            # at least one entry - "single" for most sinks, "mix" only
+            # when slice.py found more than one (e.g. a concatenation-
+            # then-hash of an MCU TRNG and secure-element reads).
+            # Additive: an older findings.json simply lacks this field,
+            # and every consumer must treat that the same as
+            # entropy_shape="single" with one contribution matching the
+            # sink's own top-level status/terminal_category/chain, which
+            # is always true by construction.
+            "entropy_shape": "mix" if len(result.contributions) > 1 else "single",
+            "contributions": [
+                {
+                    "source_expr": c.source_expr,
+                    "status": c.status,
+                    **({"terminal_category": c.classification.category.value} if c.classification else {}),
+                    **({"unknown_reason": c.unknown_reason} if c.unknown_reason else {}),
+                    "chain": _serialize_chain(c.hops),
+                }
+                for c in result.contributions
+            ],
         }
         if result.status == "CLASSIFIED":
             entry["terminal_category"] = result.classification.category.value
@@ -212,10 +237,19 @@ def run_profile(profile_path: str, mode: str = "pr", stub_dir: str | None = None
         }
         head_status = head_entry["status"]
         head_unknown_reason = head_entry.get("unknown_reason")
-        unknown_count = 1 if head_status == "UNKNOWN" else 0
+        head_entropy_shape = head_entry["entropy_shape"]
+        head_contributions = head_entry["contributions"]
+        # Count every UNKNOWN contributor across the whole mix, not just
+        # whether the head/primary one happens to be unknown - a sink can
+        # have head_status CLASSIFIED (its first contribution resolves)
+        # while other contributions are still UNKNOWN, and this field's
+        # own meaning ("number of UNKNOWN hops/edges encountered") has to
+        # reflect that.
+        unknown_count = sum(1 for c in head_contributions if c["status"] == "UNKNOWN")
     else:
         head_chain, head_terminal, head_sink_obj = [], None, None
         head_status, head_unknown_reason, unknown_count = "UNKNOWN", "no sinks found in this profile", 0
+        head_entropy_shape, head_contributions = "single", []
 
     # profile.target_kwargs is {} for "unset, use the callee's own
     # default" and {"target_yaml": ...} otherwise - both an unset
@@ -248,6 +282,11 @@ def run_profile(profile_path: str, mode: str = "pr", stub_dir: str | None = None
         "unknown_reason": head_unknown_reason,
         "confidence": "high" if head_status == "CLASSIFIED" else "low",
         "unknown_count": unknown_count,
+        # Mirrors coverage.chains[head_idx]'s own entropy_shape/
+        # contributions - additive, absent from any findings.json
+        # produced before this field existed.
+        "entropy_shape": head_entropy_shape,
+        "contributions": head_contributions,
         "coverage": coverage,
     }
     findings["policy"] = evaluate_policy(findings, mode=mode)

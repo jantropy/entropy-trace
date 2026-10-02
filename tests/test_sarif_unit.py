@@ -65,6 +65,33 @@ UNKNOWN_ENTRY = {
     "broke_at_hop": "s_hdnode_from_master",
 }
 
+MIX_ENTRY = {
+    "sink_name": "generate_seed",
+    "sink_category": "SEED_GENERATION",
+    "entropy_critical": True,
+    "mechanism": "catalogue",
+    "file": "seed.py",
+    "line": 1,
+    "status": "CLASSIFIED",
+    "terminal_category": "HW_TRNG",
+    "chain": [{"index": 0, "kind": "python_sink", "symbol": "generate_seed", "file": "seed.py", "line": 1, "detail": "", "resolution_verdict": None}],
+    "entropy_shape": "mix",
+    "contributions": [
+        {
+            "source_expr": "ngu.random.bytes",
+            "status": "CLASSIFIED",
+            "terminal_category": "HW_TRNG",
+            "chain": [{"index": 0, "kind": "c_call", "symbol": "rng_get", "file": "rng.c", "line": 10, "detail": "", "resolution_verdict": None}],
+        },
+        {
+            "source_expr": "callgate.read_rng",
+            "status": "UNKNOWN",
+            "unknown_reason": "no MP_REGISTER_MODULE found for 'callgate'",
+            "chain": [],
+        },
+    ],
+}
+
 NOT_CRITICAL_ENTRY = {
     "sink_name": "rfc6979_nonce",
     "sink_category": "DETERMINISTIC_NONCE",
@@ -165,6 +192,30 @@ def test_rules_array_has_help_and_description_for_every_used_rule():
     for rule in driver["rules"]:
         assert rule["shortDescription"]["text"]
         assert rule["help"]["text"]
+
+
+def test_mix_gets_one_thread_flow_per_contribution(sarif_schema):
+    """A mix never collapses to a single threadFlow - each independent
+    source gets its own, in the same codeFlow, and the result still
+    validates against the real SARIF schema."""
+    findings = _findings([MIX_ENTRY])
+    sarif = build_sarif(findings)
+    jsonschema.validate(sarif, sarif_schema)
+    result = sarif["runs"][0]["results"][0]
+    thread_flows = result["codeFlows"][0]["threadFlows"]
+    assert len(thread_flows) == 2
+    assert "no MP_REGISTER_MODULE found for 'callgate'" in json.dumps(thread_flows[1])
+
+
+def test_mix_message_names_every_contribution():
+    """The top-level result message must name every contribution, not
+    just the head one - an UNKNOWN contributor must never hide behind a
+    good result."""
+    findings = _findings([MIX_ENTRY])
+    message = build_sarif(findings)["runs"][0]["results"][0]["message"]["text"]
+    assert "ngu.random.bytes -> HW_TRNG" in message
+    assert "callgate.read_rng -> UNKNOWN" in message
+    assert "combines 2 independent sources" in message
 
 
 def test_no_forbidden_language_in_messages():

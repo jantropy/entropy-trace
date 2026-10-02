@@ -119,6 +119,12 @@ following it further. This is the actual trace: sink -> `ngu.random.bytes` ->
 time. Every hop that can't be followed comes back an explicit UNKNOWN with a
 reason, never a plausible-looking guess at what happens next.
 
+A sink isn't always a single chain, either. Some real wallets combine more than
+one independent entropy source before hashing (e.g. an MCU TRNG read
+concatenated with a secure-element read). Each independent source is walked and
+classified completely separately, and the sink's own result carries every one
+of them - never silently collapsed into whichever happens to resolve first.
+
 **8. Policy:** _given where a chain ended up, does that pass?_  
 `analysis/policy.py`. A plain lookup table: (mode, terminal category) -> PASS,
 WARN, or FAIL. Nothing here re-derives a verdict from a category by hand
@@ -126,6 +132,15 @@ anywhere else in the project - SARIF, the HTML report, CI's exit code, and the
 web UI all read the one `policy` object this module builds. A PASS only means
 a sink resolved, under this mode, to a source class the policy accepts - never
 that the resulting keys are actually safe.
+
+For a sink with more than one independent source, the verdict takes the
+*maximum* of the contributors, not the minimum: a cryptographic transform over
+a mix doesn't create entropy, it only combines what's already there, so one
+genuinely good source is not weakened by a co-located bad one when the two are
+independent. The one exception: an UNKNOWN contributor is never silently
+absorbed into a PASS just because another contributor is good - a good-plus-
+unknown mix gets exactly the same treatment a bare UNKNOWN sink already gets
+(WARN in pr mode, FAIL in audit mode), never a quiet green light.
 
 **9. The profile:** _what does "analyse this project" actually mean, in one file?_  
 `profiles.py`. A profile YAML says where the checkout lives, how to get its build

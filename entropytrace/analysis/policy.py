@@ -59,6 +59,19 @@ _TABLE: dict[tuple[str, str], Verdict] = {
 }
 
 
+# Categories a mix's maximum-input rule treats as "good" - if any
+# independent contributor lands here, the whole mix's entropy is at least
+# that good, regardless of how many other contributors are weak (a
+# cryptographic transform over a mix doesn't create entropy, it only
+# mixes what's already there - a mix is never poisoned by one bad input
+# when a good one is also present). Kept here, not re-derived from
+# _TABLE, since this is a fact about categories themselves, not about a
+# mode's pass/fail mapping of them - both pr and audit mode agree on
+# which categories are "good" (only UNKNOWN's mapping differs by mode).
+_GOOD_CATEGORIES = {"HW_TRNG", "OS_CSPRNG", "LIB_CSPRNG", "USER_ENTROPY"}
+_BAD_CATEGORIES = {"NON_CRYPTO_PRNG", "CONSTANT", "TIME_SEEDED"}
+
+
 def decide(status: str, terminal_category: str | None, mode: str = "pr") -> Verdict:
     """One sink's verdict.
 
@@ -76,6 +89,58 @@ def decide(status: str, terminal_category: str | None, mode: str = "pr") -> Verd
             f"no policy verdict for status={status!r} terminal_category={terminal_category!r} "
             f"(mode={mode!r}) -- not one of the categories this table covers"
         )
+
+
+def decide_mix(contributions: list[tuple[str, str | None]], mode: str = "pr") -> Verdict:
+    """A sink's verdict when its entropy comes from more than one
+    independent source - e.g. a function that concatenates an MCU TRNG
+    read with a secure-element read before hashing. `contributions` is
+    `[(status, terminal_category), ...]`, one pair per independent
+    source, the same shape `decide()` takes for a single sink.
+
+    The rule, in order:
+
+    1. Combination doesn't create entropy, it only mixes what's already
+       there - so a mix's classification is never better than its best
+       individual contributor, and a hash over the result doesn't change
+       that. If any contributor is a good category (_GOOD_CATEGORIES),
+       the mix is at least that good, regardless of how many other
+       contributors are weak or unknown - independent sources combined
+       by XOR/concatenation-then-hash give the maximum of the inputs,
+       not the minimum.
+    2. But an unknown contributor is never silently absorbed into a PASS
+       just because another contributor is good - good-plus-unknown gets
+       the same treatment a bare UNKNOWN result already gets: WARN in pr
+       mode, FAIL in audit mode. This is the one case where mode matters
+       for a mix; every other case below is mode-independent.
+    3. With no good contributor at all, a bad classification wins over an
+       unknown one - the mix is definitely weak, not merely unresolved.
+    4. With no good and no bad contributor, every source is unknown - the
+       same case a bare single-source UNKNOWN sink already reports,
+       generalised: WARN in pr mode, FAIL in audit mode.
+
+    A mix of exactly one contributor reduces to exactly `decide()`'s own
+    table by construction (every sink without a genuine mix is a "mix" of
+    one, in this sense) - this function isn't used for that case (slice.py
+    only ever populates more than one contribution for a genuine mix),
+    but the table below is deliberately built so it would give the
+    identical answer if it were.
+    """
+    if mode not in (Mode.PR.value, Mode.AUDIT.value):
+        raise ValueError(f"unknown policy mode {mode!r} -- expected 'pr' or 'audit'")
+    categories = [cat if status == "CLASSIFIED" else "UNKNOWN" for status, cat in contributions]
+    has_good = any(c in _GOOD_CATEGORIES for c in categories)
+    has_bad = any(c in _BAD_CATEGORIES for c in categories)
+    has_unknown = any(c == "UNKNOWN" for c in categories)
+
+    if has_good and not has_unknown:
+        return Verdict.PASS
+    if has_good and has_unknown:
+        return Verdict.WARN if mode == Mode.PR.value else Verdict.FAIL
+    if has_bad:
+        return Verdict.FAIL
+    # Only UNKNOWN contributors, no good, no bad.
+    return Verdict.WARN if mode == Mode.PR.value else Verdict.FAIL
 
 
 @dataclasses.dataclass(frozen=True)
@@ -112,7 +177,15 @@ def evaluate(findings: dict, mode: str = "pr") -> dict:
     for entry in coverage["chains"]:
         if not entry.get("entropy_critical", False):
             continue
-        v = decide(entry["status"], entry.get("terminal_category"), mode)
+        contributions = entry.get("contributions") or []
+        # decide_mix only for a genuine mix (more than one independent
+        # source) - a sink with exactly one contribution (or none
+        # recorded, for an older findings.json predating this field)
+        # goes through decide() exactly as it always has.
+        if len(contributions) > 1:
+            v = decide_mix([(c["status"], c.get("terminal_category")) for c in contributions], mode)
+        else:
+            v = decide(entry["status"], entry.get("terminal_category"), mode)
         verdicts.append(
             {
                 "sink_name": entry["sink_name"],

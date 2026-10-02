@@ -186,6 +186,20 @@ a { color: var(--accent); }
 .kv-row .k { min-width: 150px; }
 .kv-row .v { color: var(--text); }
 
+/* --- Mix: more than one independent entropy source, each rendered as
+   its own labelled, self-contained chain -- never merged into one,
+   since a mix has no single chain to show. --- */
+.mix-note { color: var(--text-dim); font-size: 0.88rem; margin: 12px 0; }
+.contribution {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-raised);
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+.contribution-label { color: var(--text-dim); font-size: 0.85rem; margin-bottom: 4px; }
+.contribution:last-child { margin-bottom: 0; }
+
 .chain {
   margin: 18px 0;
   padding-left: 4px;
@@ -311,6 +325,39 @@ def _terminal_hop_html(entry: dict) -> str:
     )
 
 
+def _contribution_html(contribution: dict) -> str:
+    """One independent entropy source within a mix: its own self-contained
+    chain and terminal marker, labelled with the dotted path or symbol it
+    started from, so a reader can see exactly which inputs were found and
+    how each was classified - never collapsed into a single chain, since
+    a mix genuinely has no one chain to show."""
+    status = contribution["status"]
+    category = contribution.get("terminal_category")
+    cls = _terminal_class(category, status)
+    hops_html = "".join(_hop_html(h) for h in (contribution.get("chain") or []))
+    chain = contribution.get("chain") or []
+    terminal_symbol = chain[-1]["symbol"] if chain else contribution["source_expr"]
+    label = _e(category) if status == "CLASSIFIED" else "UNKNOWN"
+    reason_html = (
+        f'<div class="unknown-reason">{_e(contribution.get("unknown_reason") or "no reason recorded")}</div>'
+        if status == "UNKNOWN"
+        else ""
+    )
+    return f"""
+<div class="contribution">
+  <div class="contribution-label">source: <span class="mono">{_e(contribution["source_expr"])}</span></div>
+  <div class="chain">
+    {hops_html}
+    <div class="hop terminal {cls}">
+      <span class="terminal-label">terminal: {label}</span>
+      <span class="symbol">{_e(terminal_symbol)}</span>
+    </div>
+  </div>
+  {reason_html}
+</div>
+"""
+
+
 def _confidence_for(entry: dict, findings: dict) -> str:
     """The headline sink's confidence comes straight from findings.json's
     own confidence field; every other coverage entry applies the exact
@@ -325,8 +372,6 @@ def _card_html(entry: dict, verdict: str, mode: str, findings: dict) -> str:
     status = entry["status"]
     category = entry.get("terminal_category")
     confidence = _confidence_for(entry, findings)
-    hops_html = "".join(_hop_html(h) for h in (entry.get("chain") or []))
-    terminal_html = _terminal_hop_html(entry)
 
     why_key = category if status == "CLASSIFIED" else "UNKNOWN"
     why_text = _WHY_THIS_MATTERS.get(why_key, "")
@@ -341,6 +386,29 @@ def _card_html(entry: dict, verdict: str, mode: str, findings: dict) -> str:
             f'<div class="unknown-reason">{_e(reason)}</div>'
         )
 
+    # A mix renders every independent contribution as its own labelled
+    # sub-chain - never collapsed into the single chain a single-source
+    # sink always has. entropy_shape is absent on a findings.json from
+    # before this field existed, so the single-source rendering below is
+    # exactly what a missing field also gets.
+    if entry.get("entropy_shape") == "mix":
+        contributions = entry.get("contributions") or []
+        mix_note = (
+            f'<div class="mix-note">Mix of {len(contributions)} independent sources -- '
+            "entropy is at least as strong as the best classified contributor "
+            "(never rescued by hashing alone; see the project README).</div>"
+        )
+        chain_html = mix_note + "".join(_contribution_html(c) for c in contributions)
+    else:
+        hops_html = "".join(_hop_html(h) for h in (entry.get("chain") or []))
+        terminal_html = _terminal_hop_html(entry)
+        chain_html = f"""
+  <div class="chain">
+    {hops_html}
+    {terminal_html}
+  </div>
+"""
+
     return f"""
 <div class="card">
   <div class="card-head">
@@ -354,10 +422,7 @@ def _card_html(entry: dict, verdict: str, mode: str, findings: dict) -> str:
   <div class="kv-row"><span class="k">Policy mode</span><span class="v mono">{_e(mode)}</span></div>
   <div class="kv-row"><span class="k">Confidence</span><span class="v mono">{_e(confidence)}</span></div>
   {unknown_block}
-  <div class="chain">
-    {hops_html}
-    {terminal_html}
-  </div>
+  {chain_html}
   {f'<div class="why"><span class="label">Why this matters:</span> {_e(why_text)}</div>' if why_text else ""}
 </div>
 """

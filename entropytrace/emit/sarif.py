@@ -123,28 +123,63 @@ def _location_for(file_: str | None, line: int | None, text: str) -> dict:
     return loc
 
 
-def _thread_flow_locations(entry: dict) -> list[dict]:
-    """One threadFlowLocation per hop in entry["chain"], in order, plus -
-    when the sink's status is UNKNOWN - one more carrying the exact
-    recorded unknown_reason, anchored at the last real hop's location (or
-    the sink's own declared file:line if the walk never produced a single
-    hop). Never truncates an unknown hop out of the flow."""
+def _thread_flow_locations_for(
+    chain: list[dict], status: str, unknown_reason: str | None,
+    fallback_file: str | None, fallback_line: int | None, message_prefix: str = "",
+) -> list[dict]:
+    """One threadFlowLocation per hop in `chain`, in order, plus - when
+    `status` is UNKNOWN - one more carrying the exact recorded
+    `unknown_reason`, anchored at the last real hop's location (or
+    `fallback_file`/`fallback_line` if the walk never produced a single
+    hop, e.g. a structural-anchor sink whose entry point is a formal
+    parameter). Never truncates an unknown hop out of the flow. Factored
+    out so a mix's own per-contribution flows (`_thread_flows_for_mix`)
+    can reuse the exact same logic instead of a second, parallel
+    implementation."""
     locations = []
-    chain = entry.get("chain") or []
     for i, hop in enumerate(chain):
-        locations.append({"location": _location_for(hop.get("file"), hop.get("line"), _hop_message(hop, i))})
+        locations.append(
+            {"location": _location_for(hop.get("file"), hop.get("line"), message_prefix + _hop_message(hop, i))}
+        )
 
-    if entry["status"] == "UNKNOWN":
-        reason = entry.get("unknown_reason") or "no reason recorded"
+    if status == "UNKNOWN":
+        reason = unknown_reason or "no reason recorded"
         if chain:
             last = chain[-1]
             anchor_file, anchor_line = last.get("file"), last.get("line")
         else:
-            anchor_file, anchor_line = entry.get("file"), entry.get("line")
+            anchor_file, anchor_line = fallback_file, fallback_line
         locations.append(
-            {"location": _location_for(anchor_file, anchor_line, f"UNKNOWN: {reason}")}
+            {"location": _location_for(anchor_file, anchor_line, f"{message_prefix}UNKNOWN: {reason}")}
         )
     return locations
+
+
+def _thread_flow_locations(entry: dict) -> list[dict]:
+    """The single-source case: one thread flow's worth of locations for
+    `entry`'s own chain."""
+    return _thread_flow_locations_for(
+        entry.get("chain") or [], entry["status"], entry.get("unknown_reason"),
+        entry.get("file"), entry.get("line"),
+    )
+
+
+def _thread_flows_for_mix(entry: dict) -> list[dict]:
+    """One threadFlow per independent contribution, each prefixed with the
+    source it started from, so a reader (or a SARIF viewer's own flow
+    list) can see which inputs were found and how each was classified -
+    never collapsed into a single flow, since a mix has no one chain to
+    report."""
+    return [
+        {
+            "locations": _thread_flow_locations_for(
+                c.get("chain") or [], c["status"], c.get("unknown_reason"),
+                entry.get("file"), entry.get("line"),
+                message_prefix=f"[source: {c['source_expr']}] ",
+            )
+        }
+        for c in (entry.get("contributions") or [])
+    ]
 
 
 def _fingerprint(entry: dict) -> dict:
@@ -164,6 +199,21 @@ def _fingerprint(entry: dict) -> dict:
 
 def _message_for(entry: dict, verdict: str, mode: str) -> str:
     sink_name = entry["sink_name"]
+    # A mix's own contributions - not just the head one - get named
+    # directly in the message a reader sees first, since the head
+    # contribution alone (e.g. "resolved to HW_TRNG") wouldn't say two
+    # other sources were unknown, and an UNKNOWN contributor must never
+    # hide behind a good result.
+    if entry.get("entropy_shape") == "mix":
+        contributions = entry.get("contributions") or []
+        parts = [
+            f"{c['source_expr']} -> {c['terminal_category']}" if c["status"] == "CLASSIFIED" else f"{c['source_expr']} -> UNKNOWN"
+            for c in contributions
+        ]
+        return (
+            f"Entropy-critical sink '{sink_name}' combines {len(contributions)} independent "
+            f"sources ({'; '.join(parts)}); combined verdict under policy mode '{mode}': {verdict}."
+        )
     if entry["status"] == "UNKNOWN":
         return (
             f"Entropy-critical sink '{sink_name}' could not be resolved to a classified "
@@ -183,12 +233,22 @@ def _result_for(entry: dict, verdict: str, mode: str) -> dict:
     category = entry.get("terminal_category") if status == "CLASSIFIED" else "UNKNOWN"
     rule_id = _rule_id(category)
     message_text = _message_for(entry, verdict, mode)
+    # A mix gets one threadFlow per independent contribution in the same
+    # codeFlow, rather than the single threadFlow a single-source sink
+    # has. entropy_shape is absent on a findings.json from before this
+    # field existed, so the single-source branch below is exactly what a
+    # missing field also gets.
+    thread_flows = (
+        _thread_flows_for_mix(entry)
+        if entry.get("entropy_shape") == "mix"
+        else [{"locations": _thread_flow_locations(entry)}]
+    )
     return {
         "ruleId": rule_id,
         "level": _VERDICT_TO_LEVEL[verdict],
         "message": {"text": message_text},
         "locations": [_location_for(entry.get("file"), entry.get("line"), message_text)],
-        "codeFlows": [{"threadFlows": [{"locations": _thread_flow_locations(entry)}]}],
+        "codeFlows": [{"threadFlows": thread_flows}],
         "partialFingerprints": _fingerprint(entry),
     }
 

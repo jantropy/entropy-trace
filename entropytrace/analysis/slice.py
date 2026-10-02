@@ -27,6 +27,11 @@ correctly keeps going into whatever it delegates to.
 Every hop that can't be followed produces an explicit UNKNOWN with a
 reason naming exactly what was tried and why it didn't work. This module
 never invents a plausible-looking next hop.
+
+A sink can also combine more than one independent entropy source before
+a sink function returns (e.g. concatenating an MCU TRNG read with a
+secure-element read, then hashing). Each source is walked and classified
+completely independently - see `Contribution`'s own docstring for why.
 """
 
 import ast
@@ -90,6 +95,31 @@ class SliceResult:
     status: str  # "CLASSIFIED" or "UNKNOWN"
     classification: Classification | None = None
     unknown_reason: str | None = None
+    # Every SliceResult carries the full set of independent sources this
+    # sink's entropy is actually built from - always at least one entry
+    # (the single-source case every sink has by default), more than one
+    # only for a genuine mix. The top-level hops/status/classification/
+    # unknown_reason fields above are always exactly contributions[0]'s
+    # own values in the single-source case - this field is additive,
+    # never a replacement.
+    contributions: list["Contribution"] = dataclasses.field(default_factory=list)
+
+
+@dataclasses.dataclass
+class Contribution:
+    """One independent entropy input to a sink's result. For a
+    single-source sink this is a full duplicate of the SliceResult's own
+    top-level hops/status/classification/unknown_reason; for a mix, one of
+    several, each walked and classified completely independently of the
+    others (independent sources are combined by XOR, concatenation-then-
+    hash, or an equivalent mixing function, so there's no reason - and no
+    way - to trace them as a single chain)."""
+
+    source_expr: str  # e.g. "ngu.random.bytes(32)", or a C entry_symbol
+    hops: list[Hop]
+    status: str  # "CLASSIFIED" or "UNKNOWN"
+    classification: Classification | None = None
+    unknown_reason: str | None = None
 
 
 # --- Python-side: find the FFI-crossing call inside the sink function ---
@@ -115,6 +145,45 @@ def _dotted_calls_in_order(func_node: ast.FunctionDef) -> list[tuple[str, int]]:
             if name:
                 calls.append((name, node.lineno))
     return calls
+
+
+def _top_level_source_assignments(func_node: ast.FunctionDef) -> list[tuple[str, str, int]]:
+    """Every top-level `var = a.b.c(...)` assignment in the function's own
+    body, in source order - each one is an independent entropy-source
+    candidate. A real generate_seed()-shaped function that mixes several
+    sources builds several such assignments (one MCU TRNG read, one or
+    more secure-element reads) before combining them in a single
+    expression handed to the return statement. The combining call itself
+    is never picked up here, since it's not a top-level Assign -
+    deliberately: a cryptographic transform over the sources isn't itself
+    a source, and walking further from it would either dead-end or invent
+    a spurious extra "source" out of the hash function's own internals.
+
+    Only body-level Assign statements are considered, not a full
+    `ast.walk` (which would also catch a dotted call nested inside the
+    final combining expression) - matching `_dotted_calls_in_order`'s own
+    "straight-line sink functions" assumption. A function with zero such
+    assignments (the single-source shape most sinks have) returns an
+    empty list; callers fall back to `_dotted_calls_in_order`'s original
+    behaviour in that case."""
+    sources = []
+    for stmt in func_node.body:
+        if (
+            isinstance(stmt, ast.Assign)
+            and len(stmt.targets) == 1
+            and isinstance(stmt.targets[0], ast.Name)
+            and isinstance(stmt.value, ast.Call)
+        ):
+            dotted = _dotted_name(stmt.value.func)
+            # A bare name (no dot at all - "bytearray(32)", a buffer
+            # allocation, not a call to anything) can never resolve over
+            # FFI in the first place (resolve_ffi_path's own
+            # precondition). Without this filter a plain buffer
+            # allocation right before the real entropy call gets reported
+            # as a spurious, misleading UNKNOWN "source".
+            if dotted and "." in dotted:
+                sources.append((stmt.targets[0].id, dotted, stmt.lineno))
+    return sources
 
 
 def _find_python_function(repo_root: str, rel_file: str, func_name: str):
@@ -306,6 +375,25 @@ def walk_c_chain(
     return hops, None, f"exceeded max_hops={max_hops} without reaching a registry match"
 
 
+def _single_source_result(
+    sink: Sink,
+    source_expr: str,
+    hops: list[Hop],
+    status: str,
+    classification: Classification | None = None,
+    unknown_reason: str | None = None,
+) -> SliceResult:
+    """Build a SliceResult for a sink with exactly one entropy source -
+    the shape most sinks have. `contributions` is always populated (a
+    length-1 list duplicating the top-level fields), so every consumer of
+    a SliceResult can iterate `contributions` uniformly instead of
+    special-casing "no mix here"."""
+    return SliceResult(
+        sink, hops, status, classification, unknown_reason,
+        contributions=[Contribution(source_expr, hops, status, classification, unknown_reason)],
+    )
+
+
 def _walk_c_native_sink(
     sink: Sink,
     build_set: list[TranslationUnit],
@@ -329,8 +417,8 @@ def _walk_c_native_sink(
     # never actually traced.
     text, err = _preprocessed_text(sink.file, build_set, stub_dir, text_cache, target_yaml)
     if text is None:
-        return SliceResult(
-            sink, [], "UNKNOWN",
+        return _single_source_result(
+            sink, sink.entry_symbol, [], "UNKNOWN",
             unknown_reason=(
                 f"could not preprocess {sink.file!r} to locate sink function "
                 f"{sink.entry_symbol!r} (declared at {sink.file}:{sink.line}): {err}"
@@ -341,8 +429,8 @@ def _walk_c_native_sink(
     local_defs, _ = extract_symbols(text, sink.file, sink_language)
     local = next((d for d in local_defs if d.symbol == sink.entry_symbol), None)
     if local is None:
-        return SliceResult(
-            sink, [], "UNKNOWN",
+        return _single_source_result(
+            sink, sink.entry_symbol, [], "UNKNOWN",
             unknown_reason=(
                 f"sink function {sink.entry_symbol!r} not found in its own declared "
                 f"file {sink.file!r} after preprocessing (declared at "
@@ -355,8 +443,8 @@ def _walk_c_native_sink(
         registry, stub_dir, target_yaml=target_yaml,
     )
     if cls is None:
-        return SliceResult(sink, hops, "UNKNOWN", unknown_reason=reason)
-    return SliceResult(sink, hops, "CLASSIFIED", classification=cls)
+        return _single_source_result(sink, sink.entry_symbol, hops, "UNKNOWN", unknown_reason=reason)
+    return _single_source_result(sink, sink.entry_symbol, hops, "CLASSIFIED", classification=cls)
 
 
 def slice_from_sink(
@@ -386,8 +474,8 @@ def slice_from_sink(
         reason, not attempted with a guess.
     """
     if sink.language == "c" and sink.mechanism == "structural_anchor":
-        return SliceResult(
-            sink, [], "UNKNOWN",
+        return _single_source_result(
+            sink, sink.entry_symbol, [], "UNKNOWN",
             unknown_reason=(
                 f"{sink.entry_symbol!r} is a formal parameter of {sink.name!r}, "
                 "not a callable entry point -- tracing what flows into it requires "
@@ -401,19 +489,45 @@ def slice_from_sink(
             sink, build_set, symbol_index, registry, stub_dir, target_yaml
         )
     if sink.language != "python":
-        return SliceResult(
-            sink, [], "UNKNOWN",
+        return _single_source_result(
+            sink, sink.entry_symbol, [], "UNKNOWN",
             unknown_reason=f"slice_from_sink does not support language {sink.language!r}",
         )
 
     func_node = _find_python_function(repo_root, sink.file, sink.entry_symbol)
     if func_node is None:
-        return SliceResult(
-            sink, [], "UNKNOWN",
+        return _single_source_result(
+            sink, sink.entry_symbol, [], "UNKNOWN",
             unknown_reason=f"function {sink.entry_symbol!r} not found in {sink.file!r}",
         )
 
-    hops: list[Hop] = [Hop("python_sink", sink.entry_symbol, sink.file, sink.line)]
+    sink_hop = Hop("python_sink", sink.entry_symbol, sink.file, sink.line)
+    sources = _top_level_source_assignments(func_node)
+    if sources:
+        # More than one top-level `var = a.b.c(...)` assignment means this
+        # sink combines independent entropy inputs (or, for the single-
+        # assignment case most sinks have, is just that one source,
+        # walked exactly as before). Each is walked and classified
+        # completely independently - see Contribution's own docstring.
+        contributions = [
+            _walk_one_python_source(
+                dotted, lineno, sink_hop, sink, build_set, symbol_index, registry, stub_dir,
+            )
+            for _varname, dotted, lineno in sources
+        ]
+        primary = contributions[0]
+        return SliceResult(
+            sink, primary.hops, primary.status, primary.classification,
+            primary.unknown_reason, contributions=contributions,
+        )
+
+    # Fallback: no top-level assignment shape was found (e.g. the entropy
+    # call sits directly in a return with no intermediate variable) - try
+    # every dotted call in the function in source order, stopping at the
+    # first one that actually resolves over FFI. A sink with exactly this
+    # shape only ever had one real source to begin with, so this remains
+    # a single-source result.
+    hops: list[Hop] = [sink_hop]
     calls = _dotted_calls_in_order(func_node)
     ffi_attempts = []
     for dotted, lineno in calls:
@@ -434,8 +548,8 @@ def slice_from_sink(
                 edge.tu, edge.c_symbol, build_set, symbol_index, stub_dir, text_cache
             )
             if start is None:
-                return SliceResult(
-                    sink, hops, "UNKNOWN",
+                return _single_source_result(
+                    sink, dotted, hops, "UNKNOWN",
                     unknown_reason=(
                         f"FFI target {edge.c_symbol!r} (from {dotted!r}, expected in "
                         f"{edge.tu!r}) did not resolve cleanly in the C build set: {how}"
@@ -447,10 +561,54 @@ def slice_from_sink(
             )
             hops.extend(c_hops)
             if cls is None:
-                return SliceResult(sink, hops, "UNKNOWN", unknown_reason=reason)
-            return SliceResult(sink, hops, "CLASSIFIED", classification=cls)
+                return _single_source_result(sink, dotted, hops, "UNKNOWN", unknown_reason=reason)
+            return _single_source_result(sink, dotted, hops, "CLASSIFIED", classification=cls)
 
-    return SliceResult(
-        sink, hops, "UNKNOWN",
+    return _single_source_result(
+        sink, sink.entry_symbol, hops, "UNKNOWN",
         unknown_reason=f"no dotted call in {sink.entry_symbol!r} resolved over FFI -- attempts: {ffi_attempts}",
     )
+
+
+def _walk_one_python_source(
+    dotted: str,
+    lineno: int,
+    sink_hop: Hop,
+    sink: Sink,
+    build_set: list[TranslationUnit],
+    symbol_index: SymbolIndex,
+    registry: list[RegistryEntry],
+    stub_dir: str,
+) -> Contribution:
+    """Resolve and walk exactly one independent Python-side entropy
+    source - the same FFI-then-C-chain logic `slice_from_sink`'s single-
+    source fallback above uses, factored out so a mix can run it once per
+    source without any of them affecting the others. Never raises: every
+    failure mode becomes an UNKNOWN Contribution with a reason naming
+    exactly what was tried, same as everywhere else in this module."""
+    hops = [sink_hop]
+    edge = resolve_ffi_path(dotted, build_set, stub_dir)
+    if edge.status != "RESOLVED":
+        return Contribution(
+            dotted, hops, "UNKNOWN",
+            unknown_reason=f"{dotted!r} did not resolve over FFI: {edge.reason}",
+        )
+    hops = hops + [Hop("ffi", dotted, sink.file, lineno, detail=f"-> {edge.c_symbol}")]
+    text_cache: dict = {}
+    start, how = _resolve_c_call(edge.tu, edge.c_symbol, build_set, symbol_index, stub_dir, text_cache)
+    if start is None:
+        return Contribution(
+            dotted, hops, "UNKNOWN",
+            unknown_reason=(
+                f"FFI target {edge.c_symbol!r} (from {dotted!r}, expected in "
+                f"{edge.tu!r}) did not resolve cleanly in the C build set: {how}"
+            ),
+        )
+    c_hops, cls, reason = walk_c_chain(
+        start.symbol, start.tu, start.file, start.line,
+        build_set, symbol_index, registry, stub_dir,
+    )
+    hops = hops + c_hops
+    if cls is None:
+        return Contribution(dotted, hops, "UNKNOWN", unknown_reason=reason)
+    return Contribution(dotted, hops, "CLASSIFIED", classification=cls)

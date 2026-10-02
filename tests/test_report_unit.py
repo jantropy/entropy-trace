@@ -42,6 +42,33 @@ UNKNOWN_ENTRY = {
     "broke_at_hop": "s_hdnode_from_master",
 }
 
+MIX_ENTRY = {
+    "sink_name": "generate_seed",
+    "sink_category": "SEED_GENERATION",
+    "entropy_critical": True,
+    "mechanism": "catalogue",
+    "file": "seed.py",
+    "line": 1,
+    "status": "CLASSIFIED",
+    "terminal_category": "HW_TRNG",
+    "chain": [{"index": 0, "kind": "python_sink", "symbol": "generate_seed", "file": "seed.py", "line": 1, "detail": "", "resolution_verdict": None}],
+    "entropy_shape": "mix",
+    "contributions": [
+        {
+            "source_expr": "ngu.random.bytes",
+            "status": "CLASSIFIED",
+            "terminal_category": "HW_TRNG",
+            "chain": [{"index": 0, "kind": "c_call", "symbol": "rng_get", "file": "rng.c", "line": 10, "detail": "", "resolution_verdict": None}],
+        },
+        {
+            "source_expr": "callgate.read_rng",
+            "status": "UNKNOWN",
+            "unknown_reason": "no MP_REGISTER_MODULE found for 'callgate'",
+            "chain": [],
+        },
+    ],
+}
+
 NOT_CRITICAL_ENTRY = {
     "sink_name": "rfc6979_nonce",
     "sink_category": "DETERMINISTIC_NONCE",
@@ -188,6 +215,20 @@ def test_no_forbidden_language():
     report = build_report_html(findings).lower()
     for word in forbidden:
         assert word not in report, f"forbidden word {word!r} found in report"
+
+
+def test_mix_renders_every_contribution_as_its_own_chain():
+    """A mix never collapses to a single chain - each independent source
+    gets its own labelled sub-chain and terminal marker, including an
+    UNKNOWN one, so a reader can see exactly which inputs were found."""
+    findings = _findings([MIX_ENTRY])
+    report = build_report_html(findings)
+    assert "Mix of 2 independent sources" in report
+    assert "ngu.random.bytes" in report
+    assert "callgate.read_rng" in report
+    assert "no MP_REGISTER_MODULE found for" in report
+    assert "callgate" in report
+    assert report.count('class="contribution"') == 2
 
 
 def test_non_entropy_critical_sink_excluded_from_findings():

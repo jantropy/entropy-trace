@@ -1,6 +1,6 @@
 import pytest
 
-from entropytrace.analysis.policy import Verdict, decide, evaluate
+from entropytrace.analysis.policy import Verdict, decide, decide_mix, evaluate
 
 # Every (mode, terminal_category) -> Verdict cell in the table, verbatim.
 _PR_TABLE = {
@@ -130,3 +130,112 @@ def test_evaluate_audit_mode_promotes_unknown_to_fail():
 def test_evaluate_requires_coverage_section():
     with pytest.raises(ValueError):
         evaluate({}, mode="pr")
+
+
+# --- decide_mix: the maximum-of-inputs rule for a sink whose entropy
+# comes from more than one independent source, and the explicit
+# unknown-in-a-mix-is-not-a-pass exception to it.
+
+def test_decide_mix_one_good_rest_unknown_is_warn_not_pass():
+    """A real shape: one classified good source, two the walker can't
+    follow (never silently green)."""
+    contributions = [("CLASSIFIED", "HW_TRNG"), ("UNKNOWN", None), ("UNKNOWN", None)]
+    assert decide_mix(contributions, mode="pr") == Verdict.WARN
+    assert decide_mix(contributions, mode="audit") == Verdict.FAIL
+
+
+def test_decide_mix_all_weak_fails():
+    """Combination doesn't create entropy - if every input is weak, the
+    mix is weak, in both modes."""
+    contributions = [("CLASSIFIED", "NON_CRYPTO_PRNG"), ("CLASSIFIED", "TIME_SEEDED")]
+    assert decide_mix(contributions, mode="pr") == Verdict.FAIL
+    assert decide_mix(contributions, mode="audit") == Verdict.FAIL
+
+
+def test_decide_mix_one_good_one_weak_passes():
+    """Independent sources take the maximum of their inputs, not the
+    minimum - one good source in a mix of weak ones makes the result
+    good, in both modes."""
+    contributions = [("CLASSIFIED", "HW_TRNG"), ("CLASSIFIED", "NON_CRYPTO_PRNG")]
+    assert decide_mix(contributions, mode="pr") == Verdict.PASS
+    assert decide_mix(contributions, mode="audit") == Verdict.PASS
+
+
+def test_decide_mix_all_unknown_matches_a_bare_unknown_sink():
+    """No good, no bad contributor - generalises the single-source UNKNOWN
+    row exactly: WARN in pr mode, FAIL in audit mode."""
+    contributions = [("UNKNOWN", None), ("UNKNOWN", None)]
+    assert decide_mix(contributions, mode="pr") == Verdict.WARN
+    assert decide_mix(contributions, mode="audit") == Verdict.FAIL
+
+
+def test_decide_mix_bad_and_unknown_no_good_still_fails():
+    """No good contributor at all: a confirmed-weak classification wins
+    over an unresolved one - the mix is definitely weak, not merely
+    unresolved."""
+    contributions = [("CLASSIFIED", "NON_CRYPTO_PRNG"), ("UNKNOWN", None)]
+    assert decide_mix(contributions, mode="pr") == Verdict.FAIL
+    assert decide_mix(contributions, mode="audit") == Verdict.FAIL
+
+
+def test_decide_mix_single_contribution_matches_decide():
+    """A "mix" of exactly one contribution is never actually constructed
+    by slice.py, but decide_mix's table is built to agree with decide()
+    for every category if it were, by construction - checked directly
+    rather than assumed."""
+    for category in ("HW_TRNG", "NON_CRYPTO_PRNG", "OS_CSPRNG", "CONSTANT"):
+        assert decide_mix([("CLASSIFIED", category)], mode="pr") == decide("CLASSIFIED", category, mode="pr")
+        assert decide_mix([("CLASSIFIED", category)], mode="audit") == decide("CLASSIFIED", category, mode="audit")
+    assert decide_mix([("UNKNOWN", None)], mode="pr") == decide("UNKNOWN", None, mode="pr")
+    assert decide_mix([("UNKNOWN", None)], mode="audit") == decide("UNKNOWN", None, mode="audit")
+
+
+def test_decide_mix_unrecognised_mode_raises():
+    with pytest.raises(ValueError):
+        decide_mix([("CLASSIFIED", "HW_TRNG")], mode="not-a-real-mode")
+
+
+def test_evaluate_dispatches_to_decide_mix_for_a_genuine_mix():
+    """evaluate() must call decide_mix (not decide) the moment a chain
+    entry has more than one contribution - confirmed via a hand-built
+    good+unknown mix that decide() alone (reading only the head status/
+    terminal_category) would score PASS, but decide_mix correctly scores
+    WARN."""
+    findings = _findings_with_coverage(
+        [
+            {
+                "sink_name": "generate_seed",
+                "entropy_critical": True,
+                "status": "CLASSIFIED",
+                "terminal_category": "HW_TRNG",
+                "contributions": [
+                    {"status": "CLASSIFIED", "terminal_category": "HW_TRNG"},
+                    {"status": "UNKNOWN"},
+                ],
+            }
+        ]
+    )
+    result = evaluate(findings, mode="pr")
+    assert result["verdicts"][0]["verdict"] == "WARN"
+    assert result["overall_verdict"] == "WARN"
+
+
+def test_evaluate_single_contribution_list_uses_decide_not_decide_mix():
+    """A chain entry with exactly one contribution (most sinks, once they
+    started recording contributions at all) must go through plain
+    decide(), unchanged - checked by giving it a shape decide_mix would
+    score differently under a hypothetical bug, and confirming evaluate()
+    doesn't take that path."""
+    findings = _findings_with_coverage(
+        [
+            {
+                "sink_name": "generate_seed",
+                "entropy_critical": True,
+                "status": "CLASSIFIED",
+                "terminal_category": "HW_TRNG",
+                "contributions": [{"status": "CLASSIFIED", "terminal_category": "HW_TRNG"}],
+            }
+        ]
+    )
+    result = evaluate(findings, mode="pr")
+    assert result["verdicts"][0]["verdict"] == "PASS"

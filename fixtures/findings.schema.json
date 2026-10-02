@@ -170,7 +170,17 @@
     "unknown_count": {
       "type": "integer",
       "minimum": 0,
-      "description": "Number of UNKNOWN hops/edges encountered while building this finding -- the honest metric worth leading benchmark reporting with."
+      "description": "Number of UNKNOWN hops/edges encountered while building this finding -- the honest metric worth leading benchmark reporting with. For entropy_shape=\"mix\", this counts every UNKNOWN contributor across the whole mix, not merely whether the head contribution happens to be unknown."
+    },
+    "entropy_shape": {
+      "type": "string",
+      "enum": ["single", "mix"],
+      "description": "Mirrors coverage.chains[] head entry's own entropy_shape -- see that field's description. Additive; absent on a findings.json from before this field existed."
+    },
+    "contributions": {
+      "type": "array",
+      "description": "Mirrors coverage.chains[] head entry's own contributions -- see that field's description.",
+      "items": {"$ref": "#/properties/coverage/properties/chains/items/properties/contributions/items"}
     },
     "coverage": {
       "type": "object",
@@ -213,6 +223,33 @@
                 "type": "array",
                 "description": "Same hop-list shape as the top-level `chain` field, populated for every sink in this coverage sweep -- not just the headline sink -- so a per-sink SARIF codeFlow or UI chain view can be built for any of them. Empty for a sink whose trace never started (e.g. a structural-anchor sink whose entry point is a formal parameter, not a callable).",
                 "items": {"$ref": "#/properties/chain/items"}
+              },
+              "entropy_shape": {
+                "type": "string",
+                "enum": ["single", "mix"],
+                "description": "Whether this sink's entropy comes from exactly one traced source (\"single\", most sinks) or an independent combination of more than one (\"mix\", e.g. a function that concatenates an MCU TRNG read with a secure-element read before hashing). Additive -- absent on a findings.json from before this field existed, which every consumer must treat identically to \"single\" with `contributions` holding one entry matching this sink's own status/terminal_category/chain (true by construction whenever this field IS present, for a \"single\" sink)."
+              },
+              "contributions": {
+                "type": "array",
+                "description": "Every independent entropy source this sink's result is built from, each walked and classified completely independently of the others (independent sources combined by XOR, concatenation-then-hash, or an equivalent mixing function take the maximum of their inputs, not the minimum -- there's no single chain to report for a mix, and no reason to force one). Always at least one entry when present. For entropy_shape=\"single\" this is exactly a one-entry restatement of this sink's own status/terminal_category/chain/unknown_reason -- additive, not a replacement for those fields.",
+                "items": {
+                  "type": "object",
+                  "required": ["source_expr", "status", "chain"],
+                  "properties": {
+                    "source_expr": {
+                      "type": "string",
+                      "description": "The dotted Python attribute path or C symbol this contribution's walk started from, e.g. \"ngu.random.bytes\" or \"callgate.read_rng\"."
+                    },
+                    "status": {"type": "string", "enum": ["CLASSIFIED", "UNKNOWN"]},
+                    "terminal_category": {"type": "string"},
+                    "unknown_reason": {"type": "string"},
+                    "chain": {
+                      "type": "array",
+                      "description": "Same hop-list shape as the top-level `chain` field, self-contained from this sink's own entry point through to this one contribution's terminal (or its own break point).",
+                      "items": {"$ref": "#/properties/chain/items"}
+                    }
+                  }
+                }
               }
             }
           }
