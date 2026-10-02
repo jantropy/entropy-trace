@@ -115,10 +115,19 @@ def _normalize_build_dir_paths(chains: list[dict], sinks: list, build_dir: str) 
                     hop["file"] = _prefix_build_dir(hop.get("file"), build_dir)
 
 
-def run_profile(profile_path: str, mode: str = "pr", stub_dir: str | None = None) -> dict:
+def run_profile(profile_path: str, mode: str = "pr", stub_dir: str | None = None, progress=None) -> dict:
     """Run the whole pipeline for one profile YAML and return the
     findings.json dict (with `policy` already attached). Writes nothing;
-    callers decide what to do with the result."""
+    callers decide what to do with the result.
+
+    `progress`, if given, is called as progress(stage, phase, **facts) at the
+    start and end of each stage (build_set, preprocess, sink_location,
+    chain_walk), so a caller can tell where a run is, or where it stopped."""
+
+    def stage(name: str, phase: str, **facts) -> None:
+        if progress is not None:
+            progress(name, phase, **facts)
+
     profile = load_profile(profile_path)
 
     stub_dir = stub_dir or profile.stub_dir
@@ -126,10 +135,15 @@ def run_profile(profile_path: str, mode: str = "pr", stub_dir: str | None = None
         stub_dir = os.path.join(profile.repo_root, ".entropytrace-stub")
     os.makedirs(stub_dir, exist_ok=True)
 
+    stage("build_set", "start")
     units = build_translation_units(profile)
+    stage("build_set", "done", units=len(units))
+    stage("preprocess", "start")
     symbol_index = build_symbol_index(units, stub_dir, **profile.target_kwargs)
+    stage("preprocess", "done", units=sum(1 for u in units if not u.is_stub), failed=len(symbol_index.failures))
     registry = load_registry_for_profile(profile)
 
+    stage("sink_location", "start")
     found_sinks = []
     if profile.run_bip32_anchor:
         anchor = find_bip32_master_seed_sink(units, stub_dir, **profile.target_kwargs)
@@ -139,7 +153,9 @@ def run_profile(profile_path: str, mode: str = "pr", stub_dir: str | None = None
         sink = _locate_sink(entry, profile.repo_root, profile.build.get("dir", ""))
         if sink is not None:
             found_sinks.append(sink)
+    stage("sink_location", "done", sinks=len(found_sinks))
 
+    stage("chain_walk", "start")
     chains = []
     results = []
     for sink in found_sinks:
@@ -188,6 +204,7 @@ def run_profile(profile_path: str, mode: str = "pr", stub_dir: str | None = None
     _normalize_build_dir_paths(chains, found_sinks, profile.build.get("dir", ""))
 
     closed = sum(1 for e in chains if e["status"] == "CLASSIFIED")
+    stage("chain_walk", "done", closed=closed, unknown=len(chains) - closed)
     by_category: dict[str, int] = {}
     for sink in found_sinks:
         by_category[sink.category.value] = by_category.get(sink.category.value, 0) + 1
@@ -335,6 +352,11 @@ def write_step_summary(findings: dict, path: str) -> None:
         f.write("\n".join(lines) + "\n")
 
 
+def _print_stage(name: str, phase: str, **facts) -> None:
+    detail = "".join(f" {k}={v}" for k, v in facts.items())
+    print(f"entropy-trace: stage={name} phase={phase}{detail}", file=sys.stderr, flush=True)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run the Entropy Trace pipeline for one profile.")
     parser.add_argument("--profile", required=True, help="Path to a profile YAML")
@@ -342,9 +364,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", required=True, help="Path to write findings.json")
     parser.add_argument("--sarif-output", help="Path to write SARIF (default: <output>.sarif)")
     parser.add_argument("--step-summary", help="Path to append a Markdown step summary to")
+    parser.add_argument(
+        "--report-stages", action="store_true",
+        help="Print a stage=<name> phase=<start|done> line to stderr at each pipeline stage boundary",
+    )
     args = parser.parse_args(argv)
 
-    findings = run_profile(args.profile, mode=args.mode)
+    findings = run_profile(args.profile, mode=args.mode, progress=_print_stage if args.report_stages else None)
 
     with open(args.output, "w") as f:
         json.dump(findings, f, indent=2)
