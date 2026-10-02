@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getFindings, listFindings, uploadFindings } from './api'
+import RunPanel from './RunPanel'
 import type { CoverageChainEntry, Findings, FindingsSummary, PolicyVerdict, Sysroot } from './types'
 
 type Verdict = 'PASS' | 'WARN' | 'FAIL'
@@ -257,7 +258,7 @@ export default function App() {
       <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-bold tracking-tight">Entropy Trace</h1>
-          <p className="text-sm text-text-dim">Provenance view &mdash; read-only over findings.json</p>
+          <p className="text-sm text-text-dim">Where does your wallet&apos;s randomness actually come from?</p>
         </div>
         <div className="flex items-center gap-3">
           <select
@@ -265,7 +266,8 @@ export default function App() {
             value={selectedName ?? ''}
             onChange={(e) => setSelectedName(e.target.value)}
           >
-            {summaries.length === 0 && <option value="">(no findings loaded)</option>}
+            {summaries.length === 0 && selectedName !== '' && <option value="">(nothing loaded)</option>}
+            {selectedName === '' && <option value="">Result of the run above</option>}
             {summaries.map((s) => (
               <option key={s.name} value={s.name}>
                 {s.label ?? s.name} &middot; {s.overall_verdict}
@@ -273,7 +275,7 @@ export default function App() {
             ))}
           </select>
           <label className="cursor-pointer rounded-md border border-border px-3 py-2 text-sm text-text-dim hover:border-accent hover:text-text">
-            {uploading ? 'Uploading…' : 'Upload findings.json'}
+            {uploading ? 'Loading…' : 'Load a saved result'}
             <input
               type="file"
               accept="application/json"
@@ -287,6 +289,15 @@ export default function App() {
           </label>
         </div>
       </header>
+
+      <RunPanel
+        onResult={(f) => {
+          setFindings(f)
+          setSelectedSink(f.sink?.name ?? f.coverage.chains[0]?.sink_name ?? null)
+          setSelectedName('')
+          setError(null)
+        }}
+      />
 
       {error && (
         <div className="mb-6 rounded-md border border-fail px-4 py-3 font-mono text-sm text-fail">{error}</div>
