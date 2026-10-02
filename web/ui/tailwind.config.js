@@ -1,23 +1,27 @@
 /** @type {import('tailwindcss').Config} */
-// Same palette as entropytrace/emit/report.py -- one visual language
-// across the HTML report and this UI.
+// "Bone and tomato": a near-black page, cream text, one hot accent. Tomato is
+// reserved for a weak result, amber for "could not finish", mint for a
+// confirmed good one; an unknown is never drawn in tomato.
 export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   theme: {
     extend: {
       colors: {
-        bg: '#17140F',
-        'bg-raised': '#201B13',
-        'bg-card': '#221D15',
-        border: '#3A3123',
-        text: '#EFE8D8',
-        'text-dim': '#A89E88',
-        accent: '#F7931A',
-        fail: '#E24B4A',
+        bg: '#151412',
+        surface: '#1c1b17',
+        line: '#2a2723',
+        'line-strong': '#3b3731',
+        bone: '#ede6dc',
+        dim: '#a39f97',
+        tomato: '#ff6a45',
+        'tomato-soft': '#ff8761',
+        'tomato-deep': '#291a15',
+        amber: '#ead16e',
+        mint: '#96d6ba',
       },
       fontFamily: {
-        mono: ['SF Mono', 'Menlo', 'Consolas', 'Liberation Mono', 'monospace'],
-        sans: ['-apple-system', 'Segoe UI', 'Helvetica Neue', 'Arial', 'sans-serif'],
+        sans: ['"Bricolage Grotesque Variable"', '-apple-system', 'Segoe UI', 'Helvetica Neue', 'Arial', 'sans-serif'],
+        mono: ['"Space Mono"', 'SF Mono', 'Menlo', 'Consolas', 'monospace'],
       },
     },
   },

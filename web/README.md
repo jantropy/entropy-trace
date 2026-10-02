@@ -29,10 +29,10 @@ make dev       # runs both servers; Ctrl+C stops both
 ## The demo interaction
 
 The page opens empty. The API's default findings directory is this repo's own
-`fixtures/`, and **Load a saved result** (top right) lists them under
-"Included examples": the two Coldcard results (vulnerable/patched), the two
+`fixtures/`, and **saved** (top right) lists them under
+"examples": the two Coldcard results (vulnerable/patched), the two
 Trust Wallet Core results and libsodium. Results of runs you complete are kept
-in this browser under "Your runs", and "Attach a file..." reads a result file
+in this browser under "your runs", and "attach a file..." reads a result file
 from disk (it is parsed in the browser and never uploaded).
 
 Load `Coldcard/firmware · vulnerable (tag ...)`, then `patched (fixes rng)` (or
@@ -53,8 +53,7 @@ That's the whole point of the tool in one interaction.
 
 ## Running an analysis from the browser
 
-The page also has an **Analyse a repository** panel: paste a GitHub URL, click
-Run, watch the stages go by, and the provenance view renders the result. This
+The page opens on a URL box: paste a GitHub URL, click Trace, watch the stages go by, and the provenance view renders the result. This
 chooses what to analyse and discovers nothing: each project's build knowledge
 (backend, `build.dir`, toolchain, entry points) is a profile written by hand,
 and a ref only picks the source tree it is applied to.
@@ -132,3 +131,15 @@ runner was set up for it) -- it was verified with `tsc -b` (typecheck),
 `npm run build` (production build), and a live end-to-end browser session
 against a real running API, including the fixture-toggle interaction
 described above.
+
+## Look and feel
+
+The look is "bone and tomato": a near-black page, cream text, one hot accent.
+Tomato marks a weak result, amber a trace that could not finish, mint a
+classified good one; an unknown is never drawn in tomato. Type is Bricolage
+Grotesque and Space Mono, bundled through npm (`@fontsource`), so nothing is
+loaded from a CDN. The two pictures beside each verdict are an illustration of
+good against weak randomness, drawn from a fixed seed; they are not output from
+the code being analysed, and the page says so. Design tokens live in
+`ui/tailwind.config.js`. The static HTML reports under `docs/reports/` keep their
+own, older styling.

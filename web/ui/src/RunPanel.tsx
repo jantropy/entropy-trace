@@ -36,23 +36,21 @@ function StageStrip({ stage, failedStage, finished }: { stage: Stage; failedStag
     <ol className="flex flex-wrap gap-2">
       {STAGES.map((s, i) => {
         // A stage that could not complete is drawn like an UNKNOWN terminal:
-        // hollow and dashed. Uncertainty is not a verdict, and a run that
-        // stopped is not a FAIL.
+        // hollow and dashed, never tomato. A run that stopped is not a FAIL.
         const isFailed = i === failed
         const isDone = failed >= 0 ? i < failed : finished || (current >= 0 && i < current)
         const isCurrent = !finished && failed < 0 && i === current
         const dot = isFailed
-          ? 'border-dashed border-text-dim bg-transparent'
+          ? 'border-dashed border-dim bg-transparent'
           : isDone
-            ? 'border-accent bg-accent'
+            ? 'border-bone bg-bone'
             : isCurrent
-              ? 'border-accent bg-transparent animate-pulse'
-              : 'border-border bg-transparent'
-        const text = isFailed ? 'text-text' : isDone || isCurrent ? 'text-text' : 'text-text-dim'
+              ? 'animate-pulse border-bone bg-transparent'
+              : 'border-line-strong bg-transparent'
         return (
-          <li key={s.key} className="flex items-center gap-2 rounded-md border border-border bg-bg-raised px-3 py-1.5">
+          <li key={s.key} className="flex items-center gap-2 rounded-lg border border-line bg-surface px-3 py-1.5">
             <span className={`h-2.5 w-2.5 rounded-full border-2 ${dot}`} />
-            <span className={`text-xs ${text}`}>{s.label}</span>
+            <span className={`font-mono text-[11px] ${isDone || isCurrent || isFailed ? 'text-bone' : 'text-dim'}`}>{s.label}</span>
           </li>
         )
       })}
@@ -60,44 +58,42 @@ function StageStrip({ stage, failedStage, finished }: { stage: Stage; failedStag
   )
 }
 
+function UnverifiedBadge() {
+  return (
+    <span className="mr-2 rounded-md border border-dashed border-dim px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-dim">
+      unverified
+    </span>
+  )
+}
+
 function OutcomeNote({ outcome }: { outcome: RunOutcome }) {
   if (outcome.kind === 'verified_ok') return null
   if (outcome.kind === 'unverified_ok') {
     return (
-      <div className="rounded-md border border-border bg-bg-raised px-4 py-3 text-sm text-text">
-        <span className="mr-2 rounded border border-dashed border-text-dim px-1.5 py-0.5 font-mono text-xs uppercase text-text-dim">
-          unverified ref
-        </span>
+      <div className="rounded-xl border border-line bg-surface px-4 py-3 text-sm">
+        <UnverifiedBadge />
         {outcome.message}
       </div>
     )
   }
   const stageName = outcome.stage ? (STAGE_NAMES[outcome.stage] ?? outcome.stage) : 'pipeline'
   return (
-    <div className="rounded-md border border-dashed border-text-dim bg-bg-raised p-4">
-      <div className="mb-1 text-xs uppercase tracking-wide text-text-dim">Stopped at: {stageName}</div>
-      <div className="mb-2 font-bold text-text">{outcome.title}</div>
-      <p className="text-sm text-text">{outcome.message}</p>
-      {outcome.evidence && <p className="mt-2 text-sm text-text-dim">{outcome.evidence}</p>}
+    <div className="rounded-xl border border-dashed border-line-strong bg-surface p-5">
+      <div className="mb-2 font-mono text-[11px] uppercase tracking-wider text-dim">stopped at: {stageName}</div>
+      <div className="mb-2 text-lg font-bold tracking-tight">{outcome.title}</div>
+      <p className="text-[15px] leading-relaxed text-bone/90">{outcome.message}</p>
+      {outcome.evidence && <p className="mt-3 text-sm leading-relaxed text-dim">{outcome.evidence}</p>}
       {outcome.broke_at && (
-        <p className="mt-2 text-sm text-text-dim">
-          Broke at hop: <span className="font-mono text-text">{outcome.broke_at}</span>
+        <p className="mt-3 text-sm text-dim">
+          Broke at hop: <span className="font-mono text-bone">{outcome.broke_at}</span>
         </p>
       )}
       {outcome.detail && (
-        <pre className="mt-3 max-h-40 overflow-auto whitespace-pre-wrap rounded border border-border bg-bg-card p-3 font-mono text-xs text-text-dim">
+        <pre className="mt-3 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg border border-line bg-bg p-3 font-mono text-[11px] leading-relaxed text-dim">
           {outcome.detail}
         </pre>
       )}
     </div>
-  )
-}
-
-function UnverifiedBadge() {
-  return (
-    <span className="mr-2 rounded border border-dashed border-text-dim px-1.5 py-0.5 font-mono text-xs uppercase text-text-dim">
-      unverified
-    </span>
   )
 }
 
@@ -212,31 +208,30 @@ export default function RunPanel({ onResult }: { onResult: (findings: Findings) 
   const busy = running || resolving
 
   return (
-    <section className="mb-8 rounded-lg border border-border bg-bg-card p-6">
-      <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-text-dim">Analyse a repository</h2>
-      <p className="mb-4 text-sm text-text-dim">
-        Paste a GitHub URL. This chooses what to analyse; it discovers nothing. Each project&apos;s build knowledge (its
-        build system, directory, toolchain and entry points) is a profile we wrote, and only repositories we have one
-        for can be analysed.
-      </p>
+    <section className="mt-12">
+      <label htmlFor="repo-url" className="mb-2 block font-mono text-[11px] text-dim">
+        paste a github url
+      </label>
 
       {loadError && (
-        <div className="mb-4 rounded-md border border-border px-4 py-3 font-mono text-sm text-text-dim">
+        <div className="mb-3 rounded-xl border border-line px-4 py-3 font-mono text-xs text-dim">
           The runner is not available: {loadError}
         </div>
       )}
 
       <form
-        className="flex flex-col gap-3 md:flex-row"
+        className="flex flex-col gap-3 sm:flex-row"
         onSubmit={(e) => {
           e.preventDefault()
           void submit(urlText)
         }}
       >
         <input
-          className="min-w-0 flex-1 rounded-md border border-border bg-bg-raised px-3 py-2 font-mono text-sm text-text placeholder:text-text-dim"
-          placeholder="https://github.com/owner/repo  or  .../tree/<tag>"
-          aria-label="GitHub URL"
+          id="repo-url"
+          className="min-w-0 flex-1 rounded-xl border border-line bg-surface px-4 py-3.5 font-mono text-[15px] text-bone outline-none placeholder:text-dim/70 focus:border-line-strong"
+          placeholder="github.com/owner/repo/tree/<tag>"
+          autoComplete="off"
+          spellCheck={false}
           value={urlText}
           disabled={busy}
           onChange={(e) => {
@@ -248,60 +243,68 @@ export default function RunPanel({ onResult }: { onResult: (findings: Findings) 
         <button
           type="submit"
           disabled={busy || !urlText.trim()}
-          className="rounded-md border border-accent bg-accent px-6 py-2 text-sm font-bold text-bg disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded-xl bg-bone px-7 py-3.5 text-[15px] font-bold text-bg transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {running ? 'Running…' : resolving ? 'Checking…' : 'Run'}
+          {running ? 'Tracing…' : resolving ? 'Checking…' : 'Trace'}
         </button>
       </form>
 
-      {projects.length > 0 && (
-        <p className="mt-3 text-xs text-text-dim">
-          Supported:{' '}
-          {projects.map((p, i) => (
-            <span key={p.key}>
-              {i > 0 && ', '}
-              <button
-                type="button"
-                disabled={busy}
-                className="text-accent underline decoration-dotted underline-offset-2 hover:text-text disabled:opacity-40"
-                onClick={() => {
-                  setUrlText(p.url)
-                  void submit(p.url)
-                }}
-              >
-                {p.name}
-              </button>
-            </span>
-          ))}
-        </p>
-      )}
+      <p className="mt-2 font-mono text-[11px] leading-relaxed text-dim">
+        {projects.length > 0 && (
+          <>
+            Supported:{' '}
+            {projects.map((p, i) => (
+              <span key={p.key}>
+                {i > 0 && ' \u00b7 '}
+                <button
+                  type="button"
+                  disabled={busy}
+                  className="underline decoration-dim/50 underline-offset-2 hover:text-bone disabled:opacity-40"
+                  onClick={() => {
+                    setUrlText(p.url)
+                    void submit(p.url)
+                  }}
+                >
+                  {p.name}
+                </button>
+              </span>
+            ))}
+            <br />
+          </>
+        )}
+        It picks what to trace and discovers nothing: {verifiedCount} projects have a build profile we wrote. Adding one
+        means writing a profile; see the README.
+      </p>
 
       {resolved && !resolved.ref && !busy && !target && (
-        <div className="mt-5 rounded-md border border-border bg-bg-raised p-4">
-          <div className="mb-3 text-sm text-text">
+        <div className="mt-6 rounded-xl border border-line bg-surface p-5">
+          <div className="mb-3 text-[15px]">
             <span className="font-bold">{resolved.name}</span> is supported. Which ref?
           </div>
           <div className="flex flex-wrap gap-2">
             {resolved.verified_refs.map((r) => (
               <button
                 key={r.ref}
-                className="rounded-md border border-border bg-bg-card px-3 py-2 text-left text-sm text-text hover:border-accent"
+                className="rounded-lg border border-line bg-bg px-3 py-2 text-left font-mono text-xs hover:border-bone"
                 onClick={() => void run(resolved.project, resolved.name, r.ref, true)}
               >
                 {r.label}
               </button>
             ))}
           </div>
-          <p className="mb-2 mt-3 text-xs text-text-dim">Verified refs have been run before and are expected to work.</p>
+          <p className="mb-2 mt-3 font-mono text-[11px] text-dim">Verified refs have been run before and are expected to work.</p>
           <form
-            className="flex flex-col gap-2 md:flex-row"
+            className="flex flex-col gap-2 sm:flex-row"
             onSubmit={(e) => {
               e.preventDefault()
-              if (otherRef.trim()) void submit(`${resolved.url}/tree/${otherRef.trim()}`)
+              if (!otherRef.trim()) return
+              const full = `${resolved.url}/tree/${otherRef.trim()}`
+              setUrlText(full)
+              void submit(full)
             }}
           >
             <input
-              className="min-w-0 flex-1 rounded-md border border-dashed border-text-dim bg-bg-card px-3 py-2 font-mono text-sm text-text placeholder:text-text-dim"
+              className="min-w-0 flex-1 rounded-lg border border-dashed border-line-strong bg-bg px-3 py-2 font-mono text-xs outline-none placeholder:text-dim/70 focus:border-dim"
               placeholder="or another branch, tag or commit"
               aria-label="Another ref"
               value={otherRef}
@@ -310,12 +313,12 @@ export default function RunPanel({ onResult }: { onResult: (findings: Findings) 
             <button
               type="submit"
               disabled={!otherRef.trim()}
-              className="rounded-md border border-border px-4 py-2 text-sm text-text hover:border-accent disabled:opacity-40"
+              className="rounded-lg border border-line px-4 py-2 font-mono text-xs hover:border-bone disabled:opacity-40"
             >
-              Run unverified
+              trace unverified
             </button>
           </form>
-          <p className="mt-2 text-xs text-text-dim">
+          <p className="mt-2 text-xs leading-relaxed text-dim">
             <UnverifiedBadge />A ref that was never run before may fail. If it does, you will be told which stage stopped
             and what that implies.
           </p>
@@ -323,34 +326,29 @@ export default function RunPanel({ onResult }: { onResult: (findings: Findings) 
       )}
 
       {cacheState && cacheState.state !== 'ready' && (
-        <p className="mt-3 text-xs text-text-dim">
+        <p className="mt-3 font-mono text-[11px] text-dim">
           {cacheState.state === 'error'
             ? `Checkout cache for this project is not ready: ${cacheState.detail}`
             : `Preparing this project's checkout cache (${cacheState.detail || cacheState.state})…`}
         </p>
       )}
 
-      <p className="mt-4 text-xs text-text-dim">
-        {verifiedCount} projects with verified build profiles. Adding a new project means writing a profile &mdash; see
-        the README.
-      </p>
-
       {startError && (
-        <div className="mt-4 rounded-md border border-border bg-bg-raised px-4 py-3 text-sm text-text">{startError}</div>
+        <div className="mt-4 rounded-xl border border-line-strong bg-surface px-4 py-3 text-sm">{startError}</div>
       )}
 
       {(snapshot || running) && (
         <div className="mt-6 space-y-4">
           {target && (
-            <div className="text-sm text-text">
+            <div className="text-[15px]">
               {!target.verified && <UnverifiedBadge />}
-              <span className="font-bold">{target.name}</span> <span className="font-mono text-text-dim">@ {target.ref}</span>
+              <span className="font-bold">{target.name}</span> <span className="font-mono text-dim">@ {target.ref}</span>
             </div>
           )}
           <StageStrip stage={snapshot?.stage ?? 'prepare'} failedStage={failedStage} finished={!!finished && !failedStage} />
           <pre
             ref={logRef}
-            className="h-48 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-bg p-3 font-mono text-xs text-text-dim"
+            className="h-44 overflow-auto whitespace-pre-wrap rounded-xl border border-line bg-surface p-4 font-mono text-[11px] leading-relaxed text-dim"
           >
             {logs.length ? logs.join('\n') : 'waiting for the run to start…'}
           </pre>

@@ -4,13 +4,13 @@ import type { SavedRun } from './savedRuns'
 import type { Findings, FindingsSummary } from './types'
 
 const VERDICT_TEXT: Record<string, string> = {
-  PASS: 'text-text',
-  WARN: 'text-accent',
-  FAIL: 'text-fail',
+  PASS: 'text-mint',
+  WARN: 'text-amber',
+  FAIL: 'text-tomato-soft',
 }
 
 function Verdict({ verdict }: { verdict: string | null }) {
-  return <span className={`font-mono text-xs font-bold ${VERDICT_TEXT[verdict ?? ''] ?? 'text-text-dim'}`}>{verdict ?? '?'}</span>
+  return <span className={`font-mono text-xs font-bold ${VERDICT_TEXT[verdict ?? ''] ?? 'text-dim'}`}>{verdict ?? '?'}</span>
 }
 
 function Row({ label, verdict, onClick }: { label: string; verdict: string | null; onClick: () => void }) {
@@ -18,7 +18,7 @@ function Row({ label, verdict, onClick }: { label: string; verdict: string | nul
     <li>
       <button
         onClick={onClick}
-        className="flex w-full items-baseline justify-between gap-3 rounded-md border border-transparent px-2 py-1.5 text-left text-sm text-text hover:border-border hover:bg-bg-raised"
+        className="flex w-full items-baseline justify-between gap-3 rounded-lg border border-transparent px-2 py-1.5 text-left text-sm hover:border-line hover:bg-bg"
       >
         <span className="truncate">{label}</span>
         <Verdict verdict={verdict} />
@@ -85,16 +85,16 @@ export default function SavedResults({
       <button
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
-        className="rounded-md border border-border px-3 py-2 text-sm text-text-dim hover:border-accent hover:text-text"
+        className="text-sm font-medium underline decoration-bone/60 underline-offset-4 hover:decoration-tomato"
       >
-        Load a saved result
+        saved
       </button>
 
       {open && (
-        <div className="absolute right-0 z-10 mt-2 w-[22rem] max-w-[90vw] rounded-lg border border-border bg-bg-card p-4 shadow-lg">
-          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-text-dim">Your runs</div>
+        <div className="absolute right-0 z-10 mt-3 w-[22rem] max-w-[90vw] rounded-xl border border-line-strong bg-surface p-4 shadow-2xl shadow-black/50">
+          <div className="mb-1 font-mono text-[11px] text-dim">your runs</div>
           {runs.length === 0 ? (
-            <p className="mb-3 px-2 text-sm text-text-dim">Runs you complete are kept here, in this browser.</p>
+            <p className="mb-3 px-2 font-mono text-xs text-dim">Runs you complete are kept here, in this browser.</p>
           ) : (
             <ul className="mb-3 max-h-48 overflow-auto">
               {runs.map((r) => (
@@ -103,9 +103,9 @@ export default function SavedResults({
             </ul>
           )}
 
-          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-text-dim">Included examples</div>
+          <div className="mb-1 font-mono text-[11px] text-dim">examples</div>
           {bundled.length === 0 ? (
-            <p className="mb-3 px-2 text-sm text-text-dim">None available.</p>
+            <p className="mb-3 px-2 font-mono text-xs text-dim">None available.</p>
           ) : (
             <ul className="mb-3 max-h-48 overflow-auto">
               {bundled.map((s) => (
@@ -119,8 +119,8 @@ export default function SavedResults({
             </ul>
           )}
 
-          <label className="block cursor-pointer rounded-md border border-dashed border-text-dim px-3 py-2 text-center text-sm text-text-dim hover:border-accent hover:text-text">
-            Attach a file…
+          <label className="block cursor-pointer rounded-lg border border-dashed border-line-strong px-3 py-2 text-center font-mono text-xs text-dim hover:border-tomato hover:text-bone">
+            attach a file…
             <input
               type="file"
               accept="application/json,.json"
@@ -132,7 +132,7 @@ export default function SavedResults({
               }}
             />
           </label>
-          {attachError && <p className="mt-2 text-xs text-accent">{attachError}</p>}
+          {attachError && <p className="mt-2 text-xs text-amber">{attachError}</p>}
         </div>
       )}
     </div>
