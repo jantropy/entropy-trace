@@ -33,7 +33,10 @@ def test_report_opens_from_disk_with_no_network(name):
     assert "http://" not in text and "https://" not in text
     assert "<link" not in text
     assert re.search(r"<script[^>]*\bsrc=", text) is None
-    assert "@import" not in text and "url(" not in text
+    assert "@import" not in text
+    # url() may only point at an embedded font or an in-document fragment
+    assert not re.search(r"url\((?!['\"]?(#|data:))", text)
+    assert "<script" not in text
 
 
 @pytest.mark.parametrize("name", [n for n in REPORTS if n != "index.html"])

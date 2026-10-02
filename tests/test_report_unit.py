@@ -69,6 +69,21 @@ MIX_ENTRY = {
     ],
 }
 
+GOOD_ENTRY = {
+    "sink_name": "generate_seed",
+    "sink_category": "SEED_GENERATION",
+    "entropy_critical": True,
+    "mechanism": "catalogue",
+    "file": "boards/COLDCARD_MK4/rng.c",
+    "line": 61,
+    "status": "CLASSIFIED",
+    "terminal_category": "HW_TRNG",
+    "chain": [
+        {"index": 0, "kind": "python_sink", "symbol": "generate_seed", "file": "shared/seed.py", "line": 602, "detail": "", "resolution_verdict": None},
+        {"index": 1, "kind": "c_call", "symbol": "rng_get_or_fault", "file": "boards/COLDCARD_MK4/rng.c", "line": 61, "detail": "local", "resolution_verdict": "local"},
+    ],
+}
+
 NOT_CRITICAL_ENTRY = {
     "sink_name": "rfc6979_nonce",
     "sink_category": "DETERMINISTIC_NONCE",
@@ -211,8 +226,10 @@ def test_no_forbidden_language():
     occurrence (even negated prose) reads as the tool making exactly the
     claim it must not make."""
     forbidden = ("secure", "safe", "verified")
-    findings = _findings([FAIL_ENTRY, UNKNOWN_ENTRY])
-    report = build_report_html(findings).lower()
+    findings = _findings([FAIL_ENTRY, UNKNOWN_ENTRY, GOOD_ENTRY, MIX_ENTRY])
+    # The embedded font payloads are base64 and can spell anything by chance;
+    # only the prose is what this rule is about.
+    report = re.sub(r"base64,[A-Za-z0-9+/=]+", "base64,", build_report_html(findings)).lower()
     for word in forbidden:
         assert word not in report, f"forbidden word {word!r} found in report"
 
@@ -239,3 +256,56 @@ def test_non_entropy_critical_sink_excluded_from_findings():
     report = build_report_html(findings)
     assert 'class="card"' not in report
     assert "No entropy-critical sinks were found" in report
+
+
+def test_report_has_no_script_and_embeds_its_fonts():
+    report = build_report_html(_findings([FAIL_ENTRY]))
+    assert "<script" not in report
+    assert report.count("@font-face") == 3  # Bricolage Grotesque, Space Mono 400 and 700
+    assert "font/woff2;base64," in report
+    assert "Bricolage Grotesque" in report and "Space Mono" in report
+
+
+def test_each_sink_gets_a_sentence_in_terms_of_what_the_trace_found():
+    report = build_report_html(_findings([FAIL_ENTRY, UNKNOWN_ENTRY, GOOD_ENTRY]))
+    assert "isn&#x27;t" in report and "cryptographic." in report  # a weak PRNG
+    assert "classified as a non-cryptographic PRNG" in report
+    assert "comes from" in report and "a hardware RNG." in report  # a classified good source
+    assert "We couldn&#x27;t follow the randomness" in report and "all the way down." in report  # unknown
+    assert "generate_key_material() ends at rand" in report
+    assert "s_hdnode_from_master() stops at s_hdnode_from_master." in report
+
+
+def test_the_pictures_are_labelled_as_an_illustration_and_unknown_gets_none_of_the_weak_picture():
+    unknown_only = build_report_html(_findings([UNKNOWN_ENTRY]))
+    assert "Illustration, not generator output." in unknown_only
+    assert "not reached" in unknown_only
+    assert 'class="frame bad"' not in unknown_only
+    weak = build_report_html(_findings([FAIL_ENTRY]))
+    assert 'class="frame bad"' in weak and "what it reached" in weak
+
+
+def test_an_unknown_terminal_is_never_drawn_like_a_weak_one():
+    report = build_report_html(_findings([UNKNOWN_ENTRY]))
+    assert "hop terminal unknown" in report
+    assert "hop terminal bad" not in report
+    assert 'class="accent unknown"' in report
+
+
+def test_the_worst_sink_is_listed_first():
+    report = build_report_html(_findings([GOOD_ENTRY, UNKNOWN_ENTRY, FAIL_ENTRY]))
+    pills = report[report.index('class="pills"'):report.index("Following the randomness down")]
+    assert pills.index("generate_key_material") < pills.index("s_hdnode_from_master") < pills.index("generate_seed")
+    assert 'href="#sink-0"' in pills and 'id="sink-0"' in report
+
+
+def test_long_paths_are_cut_to_two_segments_with_the_full_path_in_the_tooltip():
+    report = build_report_html(_findings([GOOD_ENTRY]))
+    assert ">COLDCARD_MK4/rng.c:61<" in report
+    assert 'title="boards/COLDCARD_MK4/rng.c:61"' in report
+
+
+def test_coverage_numbers_are_explained_without_script():
+    report = build_report_html(_findings([FAIL_ENTRY]))
+    assert "<details" in report and "what these numbers mean" in report
+    assert "Closed isn&#x27;t the same as good" in report

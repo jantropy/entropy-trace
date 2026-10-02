@@ -141,5 +141,8 @@ Grotesque and Space Mono, bundled through npm (`@fontsource`), so nothing is
 loaded from a CDN. The two pictures beside each verdict are an illustration of
 good against weak randomness, drawn from a fixed seed; they are not output from
 the code being analysed, and the page says so. Design tokens live in
-`ui/tailwind.config.js`. The static HTML reports under `docs/reports/` keep their
-own, older styling.
+`ui/tailwind.config.js`. The static HTML reports under `docs/reports/` use the same look
+(`entropytrace/emit/report.py`), but have to open straight off disk with no
+network and no script, so there the two fonts are embedded as data URIs (the
+files and their licences are in `entropytrace/emit/fonts/`) and the pictures are
+inline SVG.
