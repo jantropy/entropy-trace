@@ -84,7 +84,8 @@ def ensure_stub_genhdr(stub_dir: str) -> str:
     return stub_dir
 
 
-_MODULE_REGISTER_RE = re.compile(r"MP_REGISTER_MODULE\(\s*MP_QSTR_(\w+)\s*,\s*(\w+)\s*,")
+# [,)] because MP_REGISTER_MODULE also has a 2-argument form with no enable flag.
+_MODULE_REGISTER_RE = re.compile(r"MP_REGISTER_MODULE\(\s*MP_QSTR_(\w+)\s*,\s*(\w+)\s*[,)]")
 _QSTR_NAME_RE = re.compile(r"MP_QSTR_(\w+)")
 _GLOBALS_FIELD_RE = re.compile(r"\.globals\s*=\s*\([^)]*\)\s*&(\w+)")
 _TABLE_FIELD_RE = re.compile(r"\.table\s*=\s*\([^)]*\)\s*\([^)]*\)\s*(\w+)")

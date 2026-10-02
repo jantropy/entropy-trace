@@ -54,6 +54,49 @@ def test_case4_deterministic_nonce_never_becomes_a_finding():
     assert findings["coverage"]["chains"][0]["entropy_critical"] is False
 
 
+def test_normalize_build_dir_paths_does_not_double_prefix_a_python_sink():
+    from entropytrace.analysis.sinks import Sink, SinkCategory
+    from entropytrace.cli import _normalize_build_dir_paths
+
+    python_sink = Sink(
+        name="new_seed_task", category=SinkCategory.SEED_GENERATION, entropy_critical=True,
+        language="python", file="boards/Passport/modules/tasks/new_seed_task.py", line=11,
+        entry_symbol="new_seed_task",
+    )
+    chains = [
+        {
+            "file": "boards/Passport/modules/tasks/new_seed_task.py",
+            "chain": [
+                {"kind": "python_sink", "file": "boards/Passport/modules/tasks/new_seed_task.py", "line": 11},
+                {"kind": "ffi", "file": "boards/Passport/modules/tasks/new_seed_task.py", "line": 12},
+            ],
+        }
+    ]
+    _normalize_build_dir_paths(chains, [python_sink], "ports/stm32")
+    assert chains[0]["file"] == "boards/Passport/modules/tasks/new_seed_task.py"
+    for hop in chains[0]["chain"]:
+        assert hop["file"] == "boards/Passport/modules/tasks/new_seed_task.py"
+
+
+def test_normalize_build_dir_paths_still_prefixes_a_c_sink_as_before():
+    from entropytrace.analysis.sinks import Sink, SinkCategory
+    from entropytrace.cli import _normalize_build_dir_paths
+
+    c_sink = Sink(
+        name="crypto_sign_ed25519_keypair", category=SinkCategory.SEED_GENERATION, entropy_critical=True,
+        language="c", file="crypto_sign/ed25519/ref10/keypair.c", line=33, entry_symbol="crypto_sign_ed25519_keypair",
+    )
+    chains = [
+        {
+            "file": "crypto_sign/ed25519/ref10/keypair.c",
+            "chain": [{"kind": "c_call", "file": "crypto_sign/ed25519/ref10/keypair.c", "line": 33}],
+        }
+    ]
+    _normalize_build_dir_paths(chains, [c_sink], "src/libsodium")
+    assert chains[0]["file"] == "src/libsodium/crypto_sign/ed25519/ref10/keypair.c"
+    assert chains[0]["chain"][0]["file"] == "src/libsodium/crypto_sign/ed25519/ref10/keypair.c"
+
+
 def test_exit_code_for_pure_function_table():
     assert exit_code_for("FAIL", "pr") == 1
     assert exit_code_for("FAIL", "audit") == 1

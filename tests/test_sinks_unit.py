@@ -72,6 +72,23 @@ def test_locate_python_catalogue_sink_reads_real_line_from_checkout():
         assert sink.entropy_critical is True
 
 
+def test_locate_python_catalogue_sink_reads_async_def():
+    with tempfile.TemporaryDirectory() as tmp:
+        os.makedirs(os.path.join(tmp, "shared"))
+        with open(os.path.join(tmp, "shared", "seed.py"), "w") as f:
+            f.write("x = 1\n\nasync def generate_seed():\n    return b'x' * 32\n")
+        entry = {
+            "name": "generate_seed",
+            "category": "SEED_GENERATION",
+            "language": "python",
+            "file": "shared/seed.py",
+            "entry_symbol": "generate_seed",
+        }
+        sink = locate_python_catalogue_sink(entry, tmp)
+        assert sink is not None
+        assert sink.line == 3
+
+
 def test_locate_python_catalogue_sink_returns_none_when_function_absent():
     with tempfile.TemporaryDirectory() as tmp:
         os.makedirs(os.path.join(tmp, "shared"))

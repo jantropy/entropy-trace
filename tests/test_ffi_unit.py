@@ -71,3 +71,16 @@ def test_find_module_registrations_reads_raw_source_not_preprocessed():
 def test_find_module_registrations_skips_stub_tus():
     tu = TranslationUnit("stm32/rng.c", "rng.o", "", True, "/nonexistent")
     assert find_module_registrations([tu]) == {}
+
+
+def test_find_module_registrations_accepts_the_two_argument_form():
+    with tempfile.TemporaryDirectory() as tmp:
+        src_path = os.path.join(tmp, "modtrezorcrypto.c")
+        with open(src_path, "w") as f:
+            f.write(
+                "const mp_obj_module_t mp_module_trezorcrypto = {0};\n"
+                "MP_REGISTER_MODULE(MP_QSTR_trezorcrypto, mp_module_trezorcrypto);\n"
+            )
+        tu = TranslationUnit("modtrezorcrypto.c", "modtrezorcrypto.o", "", False, tmp)
+        registrations = find_module_registrations([tu])
+        assert registrations == {"trezorcrypto": "mp_module_trezorcrypto"}

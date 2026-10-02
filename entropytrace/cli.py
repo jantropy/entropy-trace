@@ -92,7 +92,7 @@ def _prefix_build_dir(path: str | None, build_dir: str) -> str | None:
     return os.path.join(build_dir, path)
 
 
-def _normalize_build_dir_paths(chains: list[dict], build_dir: str) -> None:
+def _normalize_build_dir_paths(chains: list[dict], sinks: list, build_dir: str) -> None:
     """Rebase every path-bearing field in a findings.json chains list in
     place: each entry's own file, and every hop's file inside its chain.
     Not applied to config_values[].file (already repo_root-relative by
@@ -100,10 +100,14 @@ def _normalize_build_dir_paths(chains: list[dict], build_dir: str) -> None:
     different path space entirely)."""
     if not build_dir:
         return
-    for entry in chains:
-        entry["file"] = _prefix_build_dir(entry["file"], build_dir)
+    # Only a C-language sink's own file, and a c_call hop's file, are ever
+    # build_dir-relative - a python_sink/ffi hop's file already is repo_root-relative.
+    for entry, sink in zip(chains, sinks):
+        if sink.language == "c":
+            entry["file"] = _prefix_build_dir(entry["file"], build_dir)
         for hop in entry["chain"]:
-            hop["file"] = _prefix_build_dir(hop.get("file"), build_dir)
+            if hop["kind"] == "c_call":
+                hop["file"] = _prefix_build_dir(hop.get("file"), build_dir)
 
 
 def run_profile(profile_path: str, mode: str = "pr", stub_dir: str | None = None) -> dict:
@@ -156,7 +160,7 @@ def run_profile(profile_path: str, mode: str = "pr", stub_dir: str | None = None
     # Normalize build.dir-relative paths back to repo_root-relative here,
     # once, so findings.json itself is consistent and every emitter
     # inherits it without needing to know about build.dir at all.
-    _normalize_build_dir_paths(chains, profile.build.get("dir", ""))
+    _normalize_build_dir_paths(chains, found_sinks, profile.build.get("dir", ""))
 
     closed = sum(1 for e in chains if e["status"] == "CLASSIFIED")
     by_category: dict[str, int] = {}

@@ -118,12 +118,13 @@ def _dotted_calls_in_order(func_node: ast.FunctionDef) -> list[tuple[str, int]]:
 
 
 def _find_python_function(repo_root: str, rel_file: str, func_name: str):
+    # Matches a plain def or an async def.
     path = os.path.join(repo_root, rel_file)
     with open(path, errors="replace") as f:
         source = f.read()
     tree = ast.parse(source, filename=rel_file)
     for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == func_name:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == func_name:
             return node
     return None
 

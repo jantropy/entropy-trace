@@ -108,9 +108,9 @@ def load_sink_catalogue(yaml_path: str) -> list[dict]:
 def locate_python_catalogue_sink(entry: dict, repo_root: str) -> Sink | None:
     """Bind one data/sinks.yaml entry to a real repo checkout by reading
     that checkout's own copy of the file and finding the real line of
-    `def <entry_symbol>` - never trusting a line number that might be
-    stale for this particular commit. Returns None if the file or
-    function isn't found (never fabricates a line)."""
+    `def <entry_symbol>` or `async def <entry_symbol>` - never trusting a
+    line number that might be stale for this particular commit. Returns
+    None if the file or function isn't found (never fabricates a line)."""
     category = SinkCategory(entry["category"])
     path = os.path.join(repo_root, entry["file"])
     try:
@@ -118,9 +118,10 @@ def locate_python_catalogue_sink(entry: dict, repo_root: str) -> Sink | None:
             lines = f.readlines()
     except OSError:
         return None
-    needle = f"def {entry['entry_symbol']}("
+    needles = (f"def {entry['entry_symbol']}(", f"async def {entry['entry_symbol']}(")
     for i, line_text in enumerate(lines, start=1):
-        if line_text.strip().startswith(needle) or line_text.startswith(needle):
+        stripped = line_text.strip()
+        if any(stripped.startswith(n) or line_text.startswith(n) for n in needles):
             return Sink(
                 name=entry["name"],
                 category=category,

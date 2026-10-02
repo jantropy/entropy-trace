@@ -76,6 +76,16 @@ def test_find_python_function_locates_by_name():
         assert node.lineno == 4
 
 
+def test_find_python_function_locates_an_async_def():
+    with tempfile.TemporaryDirectory() as tmp:
+        os.makedirs(os.path.join(tmp, "shared"))
+        with open(os.path.join(tmp, "shared", "seed.py"), "w") as f:
+            f.write("async def generate_seed():\n    return 1\n")
+        node = _find_python_function(tmp, "shared/seed.py", "generate_seed")
+        assert node is not None
+        assert node.name == "generate_seed"
+
+
 def test_walk_c_chain_follows_local_calls_to_registry_hit_by_name():
     with tempfile.TemporaryDirectory() as tmp:
         build_set = _build_set_for(tmp, "chain.c", SYNTHETIC_CHAIN_C)
