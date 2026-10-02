@@ -4,9 +4,11 @@ Answers the question: for a given profile, which source files does
 the real build system select for compilation, and with what per-file
 flags? 
 
-Supports two generic backends, both returns `list[TranslationUnit]`:
+Supports three generic backends, all returning `list[TranslationUnit]`:
   - `run_make_dry_run`: sourced directly from `make -n`'s own dry-run
     output, for COLDCARD and similar projects.
+  - `run_scons_dry_run`: sourced from `scons --dry-run`'s own output,
+    for SCons-based projects.
   - `read_compile_commands`: reads a `compile_commands.json` (CMake's
     `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON`, emitted at 'configure' time
     for CMake-based trees like Trust Wallet Core.
@@ -64,6 +66,15 @@ _SKIP_TAIL_RE = re.compile(r"-c\s+(/dev/null)\s+-o\s+(\S+)\s*$")
 _LIBTOOL_CC_RE = re.compile(
     r"--mode=compile\s+(?P<rest>.+?)\s+-c\s+-o\s+(?P<obj>\S+)\s+.*?test -f '(?P<src>[^']+)'"
 )
+
+# A fourth recipe shape, from SCons: `scons --dry-run` prints each real
+# compile as one plain line, `-o <obj>` BEFORE `-c` (the opposite order
+# from the make recipes above) and the source file as the line's own last
+# token, with no echo/pretty-print wrapper at all. A module-definition
+# scanning pre-pass some SCons builds also run uses `-E` and a shell
+# redirect instead of `-o`, so requiring `-o <obj>` never matches it.
+_SCONS_CC_LINE_RE = re.compile(r"^(?P<compiler>\S+)\s+-o\s+(?P<obj>\S+)\s+(?P<rest>.+)$")
+_SCONS_SRC_TAIL_RE = re.compile(r"^(?P<flags>.*)\s(?P<src>\S+\.(?:c|cc|cpp|cxx))$")
 
 
 def _parse_make_dry_run(log_text: str, cwd: str) -> list[TranslationUnit]:
@@ -131,6 +142,46 @@ def run_make_dry_run(
     if proc.returncode != 0 and fail_substring and fail_substring in proc.stderr:
         raise RuntimeError(f"make -n failed in {port_dir!r}: {proc.stderr.strip()}")
     return _parse_make_dry_run(proc.stdout + "\n" + proc.stderr, port_dir)
+
+
+def _parse_scons_dry_run(log_text: str, cwd: str) -> list[TranslationUnit]:
+    units: list[TranslationUnit] = []
+    for line in log_text.splitlines():
+        m = _SCONS_CC_LINE_RE.match(line)
+        if not m:
+            continue
+        tail = _SCONS_SRC_TAIL_RE.match(m.group("rest"))
+        if not tail:
+            continue  # e.g. a `-E ... file.c > file.upydef` codegen line, not a real compile
+        # `-c` sits at the START of `rest` here (SCons's own order is
+        # `-o <obj> -c <flags...> <src>`), so `flags` as matched above still
+        # has a leading `-c` token - stripped to match flags_raw's contract
+        # of excluding the `-c ... -o ... <src>` tail entirely, same as
+        # every other backend.
+        flags = re.sub(r"^-c\s+", "", tail.group("flags"), count=1)
+        units.append(TranslationUnit(tail.group("src"), m.group("obj"), flags, False, cwd))
+    return units
+
+
+def run_scons_dry_run(
+    project_dir: str, scons_args: list[str] | None = None, fail_substring: str | None = None
+) -> list[TranslationUnit]:
+    """Runs `scons --dry-run` in `project_dir` and parses the compile lines
+    it prints into TranslationUnits - the same "ask the build system what
+    it would do" backend as `run_make_dry_run`, for an SCons-based project.
+    `scons_args` is whatever target/variables the caller wants.
+
+    fail_substring works exactly like run_make_dry_run's own parameter. A
+    nonzero exit with no matching substring still has its stdout/stderr
+    parsed for whatever real compile lines were printed before the
+    failure, since a dependency error part-way through a large build can
+    still leave many real compile commands on the way to it.
+    """
+    cmd = ["scons", "--dry-run"] + (scons_args or [])
+    proc = subprocess.run(cmd, cwd=project_dir, capture_output=True, text=True, timeout=300)
+    if proc.returncode != 0 and fail_substring and fail_substring in proc.stderr:
+        raise RuntimeError(f"scons --dry-run failed in {project_dir!r}: {proc.stderr.strip()}")
+    return _parse_scons_dry_run(proc.stdout + "\n" + proc.stderr, project_dir)
 
 
 def read_compile_commands(json_path: str, repo_root: str | None = None) -> list[TranslationUnit]:

@@ -79,7 +79,7 @@ PROJECT_ROOT = os.path.join(os.path.dirname(__file__), "..")
 _UNSET = object()
 
 _KNOWN_ADAPTERS = ("coldcard",)
-_KNOWN_BACKENDS = ("make", "compile_commands")
+_KNOWN_BACKENDS = ("make", "compile_commands", "scons")
 
 
 class ProfileError(ValueError):
@@ -219,6 +219,15 @@ def build_translation_units(profile: Profile) -> list:
         if "dir" in profile.build:
             make_dir = os.path.join(profile.repo_root, profile.build["dir"])
         return run_make_dry_run(make_dir, profile.build.get("make_vars", {}), profile.build.get("fail_substring"))
+    if backend == "scons":
+        from entropytrace.buildset import run_scons_dry_run
+
+        scons_dir = profile.repo_root
+        if "dir" in profile.build:
+            scons_dir = os.path.join(profile.repo_root, profile.build["dir"])
+        return run_scons_dry_run(
+            scons_dir, profile.build.get("scons_args", []), profile.build.get("fail_substring")
+        )
     if backend == "compile_commands":
         from entropytrace.buildset import read_compile_commands
 

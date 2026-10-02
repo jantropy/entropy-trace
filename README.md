@@ -52,8 +52,9 @@ August 2023 by the Milk Sad research group and exploited in the wild.
 Layers:
 
 **1. Build set:** _which source files actually compile for this build?_  
-`buildset.py`. Two backends: `make -n`, which prints the compile commands without
-running them, and `compile_commands.json`, which CMake emits at configure time.
+`buildset.py`. Three backends: `make -n`, which prints the compile commands
+without running them, `scons --dry-run`, the same idea for an SCons-based
+build, and `compile_commands.json`, which CMake emits at configure time.
 Output is a list of translation units, each with its real flags. This layer exists
 because you cannot analyse "the repo" - you analyse "the build." Coldcard's fix was
 literally a file being swapped out of the build set, visible in `make -n` output
@@ -155,7 +156,7 @@ unknown mix gets exactly the same treatment a bare UNKNOWN sink already gets
 
 **9. The profile:** _what does "analyse this project" actually mean, in one file?_  
 `profiles.py`. A profile YAML says where the checkout lives, how to get its build
-set (plain `make -n`, `compile_commands.json`, or a named adapter), which target
+set (plain `make -n`, `scons --dry-run`, `compile_commands.json`, or a named adapter), which target
 macros and sysroot apply, and which sinks to look for beyond the shared catalogue.
 Loading one never silently fills in a missing field - a profile that's missing
 something required fails with the exact field name, not a guess.

@@ -2,7 +2,7 @@ import json
 import os
 import tempfile
 
-from entropytrace.buildset import TranslationUnit, read_compile_commands, run_make_dry_run
+from entropytrace.buildset import TranslationUnit, _parse_scons_dry_run, read_compile_commands, run_make_dry_run
 from entropytrace.symbols import extract_symbols
 
 
@@ -101,6 +101,37 @@ def test_run_make_dry_run_parses_automake_libtool_recipe_shape():
         assert units[0].object == "thing.lo"
         assert "-DPACKAGE=1" in units[0].flags_raw
         assert "-c" not in units[0].flags_raw
+
+
+def test_parse_scons_dry_run_finds_real_compile_lines_not_the_codegen_preprocess_ones():
+    """`scons --dry-run` prints each real compile as one plain line with
+    `-o <obj>` BEFORE `-c` (the opposite order from the make recipes
+    _CC_TAIL_RE was written against) and the source file as the line's
+    own last token - no echo/pretty-print wrapper. Also present in real
+    output: a `-E ... file.c > file.upydef` module-definition-scanning
+    pre-pass, which uses `-E` and a shell redirect instead of `-o` and
+    must NOT be picked up as a real compile unit. Both lines below are
+    copied verbatim (trimmed) from a real `scons --dry-run` run against
+    trezor-firmware core/v2.9.2's build_unix target."""
+    log = (
+        'gcc -E -DNO_QSTR -Ivendor vendor/micropython/extmod/vfs_posix_file.c '
+        '> build/unix/vendor/micropython/extmod/vfs_posix_file.upydef\n'
+        'gcc -o build/unix/vendor/micropython/extmod/vfs_posix_file.o -c -DPYOPT=0 '
+        '-Os -std=gnu11 -Ivendor/micropython vendor/micropython/extmod/vfs_posix_file.c\n'
+    )
+    units = _parse_scons_dry_run(log, "/repo")
+    assert len(units) == 1
+    assert units[0].source == "vendor/micropython/extmod/vfs_posix_file.c"
+    assert units[0].object == "build/unix/vendor/micropython/extmod/vfs_posix_file.o"
+    assert units[0].cwd == "/repo"
+    assert "-DPYOPT=0" in units[0].flags_raw
+    assert "vfs_posix_file.c" not in units[0].flags_raw  # stripped into .source, not left in flags
+    # SCons's own compile-line order is `-o <obj> -c <flags...> <src>`
+    # (opposite of make's `-c ... -o <obj> <src>`), so a stray `-c` right
+    # after `-o <obj>` must not survive into flags_raw - it would be a
+    # hard compiler error alongside preprocess_tu's own `-E` flag.
+    assert not units[0].flags_raw.startswith("-c")
+    assert " -c " not in f" {units[0].flags_raw} "
 
 
 def test_extract_symbols_cpp_language_selects_cpp_grammar():

@@ -127,6 +127,32 @@ def test_build_dir_points_make_dash_n_at_a_subdirectory(tmp_path, monkeypatch):
     assert calls == [str(tmp_path / "sub")]
 
 
+def test_scons_backend_dispatches_with_scons_args_and_dir(tmp_path, monkeypatch):
+    """A scons-backend profile passes build.scons_args through to
+    run_scons_dry_run and, like the make backend, runs it in build.dir
+    when one is set rather than always repo_root."""
+    from entropytrace.profiles import build_translation_units
+
+    (tmp_path / "sub").mkdir()
+    profile = load_profile(
+        _write_profile(
+            tmp_path,
+            {
+                "repo_root": str(tmp_path),
+                "build": {"backend": "scons", "dir": "sub", "scons_args": ["PYOPT=0"]},
+            },
+        )
+    )
+
+    calls = []
+    monkeypatch.setattr(
+        "entropytrace.buildset.run_scons_dry_run",
+        lambda project_dir, scons_args, fail_substring: calls.append((project_dir, scons_args)) or [],
+    )
+    build_translation_units(profile)
+    assert calls == [(str(tmp_path / "sub"), ["PYOPT=0"])]
+
+
 def test_resolve_config_values_extracts_live_define_with_line_evidence(tmp_path):
     """config_values declares {name, file}, not a literal value --
     resolve_config_values greps the real #define out of the analysed repo
