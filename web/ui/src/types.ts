@@ -111,4 +111,5 @@ export interface FindingsSummary {
   schema_version: string | null
   overall_verdict: 'PASS' | 'WARN' | 'FAIL' | null
   commit: string | null
+  repo?: string | null
 }

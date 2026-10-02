@@ -26,7 +26,7 @@ import yaml
 import repo_cache
 from failure import Outcome, classify, parse_marker
 from proc import CommandTimeout, run_streaming, tool_env
-from projects import REPO_ROOT, Project, validate_ref
+from projects import REPO_ROOT, InvalidRef, Project, validate_ref
 
 MAX_LOG_LINES = 6000
 MAX_CONCURRENT_RUNS = int(os.environ.get("ENTROPY_TRACE_MAX_CONCURRENT_RUNS", "2"))
@@ -126,10 +126,36 @@ def resolve_for_run(project: Project, ref: str) -> tuple[str, bool, str | None]:
         sha = repo_cache.resolve_ref(project, ref)
     if sha is None:
         raise RefRejected(f"{ref!r} does not exist in {project.url}")
+    return (sha, *_verified(project, sha))
+
+
+def _verified(project: Project, sha: str) -> tuple[bool, str | None]:
     for verified in project.refs:
         if repo_cache.resolve_ref(project, verified.ref) == sha:
-            return sha, True, verified.label
-    return sha, False, None
+            return True, verified.label
+    return False, None
+
+
+def resolve_url_ref(project: Project, candidates: tuple[str, ...]) -> tuple[str, str, bool, str | None]:
+    """The first candidate ref (longest first) that exists in the project's
+    repository, as (ref, sha, verified, verified label). Local refs are tried
+    first so a URL costs at most one fetch, not one per candidate."""
+    if get_clone_ready(project) is False:
+        raise NotReady(f"{project.name} is still being cloned for the first time; try again in a moment")
+    usable = []
+    for cand in candidates:
+        try:
+            usable.append(validate_ref(cand))
+        except InvalidRef:
+            continue
+    for attempt in range(2):
+        for cand in usable:
+            sha = repo_cache.resolve_ref(project, cand)
+            if sha is not None:
+                return (cand, sha, *_verified(project, sha))
+        if attempt == 0:
+            repo_cache.fetch(project)
+    raise RefRejected(f"no branch, tag or commit named by that URL exists in {project.url}")
 
 
 def get_clone_ready(project: Project) -> bool:

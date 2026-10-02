@@ -17,9 +17,3 @@ export function listFindings(): Promise<FindingsSummary[]> {
 export function getFindings(name: string): Promise<Findings> {
   return fetch(`${BASE}/findings/${encodeURIComponent(name)}`).then((r) => json<Findings>(r))
 }
-
-export function uploadFindings(file: File): Promise<{ name: string; schema_version: string }> {
-  const form = new FormData()
-  form.append('file', file)
-  return fetch(`${BASE}/findings/upload`, { method: 'POST', body: form }).then((r) => json(r))
-}

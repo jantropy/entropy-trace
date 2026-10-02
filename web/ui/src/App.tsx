@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
-import { getFindings, listFindings, uploadFindings } from './api'
+import { getFindings, listFindings } from './api'
 import RunPanel from './RunPanel'
+import SavedResults from './SavedResults'
+import { loadSavedRuns, saveRun, titleFor } from './savedRuns'
+import type { SavedRun } from './savedRuns'
 import type { CoverageChainEntry, Findings, FindingsSummary, PolicyVerdict, Sysroot } from './types'
 
 type Verdict = 'PASS' | 'WARN' | 'FAIL'
@@ -26,25 +29,98 @@ function verdictFor(policyVerdicts: PolicyVerdict[], sinkName: string): Verdict 
   return v ? v.verdict : null
 }
 
-function CoveragePanel({ findings }: { findings: Findings }) {
+type Tile = 'found' | 'closed' | 'unknown' | 'resolved'
+
+const TILE_HELP: Record<Tile, string> = {
+  found:
+    "Places in the code where a seed or key is generated, located through this project's catalogue of entry points and the BIP-32 \"Bitcoin seed\" anchor.",
+  closed:
+    'Sinks whose entropy was traced all the way back to a classified source (hardware RNG, OS or library CSPRNG, user input, or a weak source). Closed does not mean good: a weak PRNG is closed, and still fails.',
+  unknown:
+    'Sinks the tool could not follow to the end. It reports where it stopped and why instead of guessing. Unknown is not a failure; it is the tool saying it does not know.',
+  resolved: 'Closed sinks divided by sinks found.',
+}
+
+function CoveragePanel({ findings, onSelectSink }: { findings: Findings; onSelectSink: (sinkName: string) => void }) {
   const cov = findings.coverage
-  const stats: [string, string | number][] = [
-    ['sinks found', cov.sinks_found],
-    ['chains closed', cov.chains_closed],
-    ['chains unknown', cov.chains_unknown],
-    ['resolved', `${cov.percentage_resolved}%`],
+  const [open, setOpen] = useState<Tile | null>(null)
+  const tiles: [Tile, string | number, string][] = [
+    ['found', cov.sinks_found, 'sinks found'],
+    ['closed', cov.chains_closed, 'chains closed'],
+    ['unknown', cov.chains_unknown, 'chains unknown'],
+    ['resolved', `${cov.percentage_resolved}%`, 'resolved'],
   ]
+  const entries =
+    open === 'closed'
+      ? cov.chains.filter((c) => c.status === 'CLASSIFIED')
+      : open === 'unknown'
+        ? cov.chains.filter((c) => c.status === 'UNKNOWN')
+        : open === 'found'
+          ? cov.chains
+          : []
+
+  const goTo = (name: string) => {
+    onSelectSink(name)
+    document.getElementById('provenance')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
   return (
     <div className="rounded-lg border border-border bg-bg-card p-4">
       <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-text-dim">Coverage</h2>
       <div className="grid grid-cols-4 gap-3">
-        {stats.map(([label, value]) => (
-          <div key={label} className="rounded-md border border-border bg-bg-raised p-3">
+        {tiles.map(([key, value, label]) => (
+          <button
+            key={key}
+            onClick={() => setOpen(open === key ? null : key)}
+            aria-expanded={open === key}
+            className={`rounded-md border bg-bg-raised p-3 text-left transition-colors hover:border-text-dim ${
+              open === key ? 'border-accent' : 'border-border'
+            }`}
+          >
             <div className="font-mono text-xl font-bold text-accent">{value}</div>
             <div className="mt-1 text-xs text-text-dim">{label}</div>
-          </div>
+          </button>
         ))}
       </div>
+
+      {open && (
+        <div className="mt-3 rounded-md border border-border bg-bg-raised p-4">
+          <p className="text-sm text-text">{TILE_HELP[open]}</p>
+          {open === 'resolved' && (
+            <p className="mt-2 font-mono text-sm text-text-dim">
+              {cov.chains_closed} of {cov.sinks_found} = {cov.percentage_resolved}%
+            </p>
+          )}
+          {entries.length > 0 && (
+            <ul className="mt-3 space-y-2">
+              {entries.map((c) => (
+                <li key={c.sink_name} className="text-sm">
+                  <button
+                    onClick={() => goTo(c.sink_name)}
+                    className="font-mono font-bold text-text underline decoration-dotted underline-offset-2 hover:text-accent"
+                  >
+                    {c.sink_name}
+                  </button>
+                  <span className="ml-2 text-text-dim">
+                    {c.file}:{c.line}
+                    {open !== 'unknown' && c.status === 'CLASSIFIED' && ` \u2192 ${c.terminal_category}`}
+                  </span>
+                  {c.status === 'UNKNOWN' && (
+                    <div className="mt-1 text-xs text-text-dim">
+                      {c.broke_at_hop && (
+                        <>
+                          Stopped at <span className="font-mono text-text">{c.broke_at_hop}</span>.{' '}
+                        </>
+                      )}
+                      <span className="whitespace-pre-wrap">{c.unknown_reason}</span>
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -208,50 +284,33 @@ function ChainView({ findings, sinkName }: { findings: Findings; sinkName: strin
 }
 
 export default function App() {
-  const [summaries, setSummaries] = useState<FindingsSummary[]>([])
-  const [selectedName, setSelectedName] = useState<string | null>(null)
+  const [bundled, setBundled] = useState<FindingsSummary[]>([])
+  const [runs, setRuns] = useState<SavedRun[]>(() => loadSavedRuns())
   const [findings, setFindings] = useState<Findings | null>(null)
+  const [viewing, setViewing] = useState<string | null>(null)
   const [selectedSink, setSelectedSink] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [uploading, setUploading] = useState(false)
 
   useEffect(() => {
     listFindings()
-      .then((list) => {
-        setSummaries(list)
-        const preferred = list.find((f) => f.name === 'findings-vulnerable.json') ?? list[0]
-        if (preferred) setSelectedName(preferred.name)
-      })
+      .then(setBundled)
       .catch((e) => setError(String(e)))
   }, [])
 
-  useEffect(() => {
-    if (!selectedName) return
-    getFindings(selectedName)
-      .then((f) => {
-        setFindings(f)
-        setSelectedSink(f.sink?.name ?? f.coverage.chains[0]?.sink_name ?? null)
-        setError(null)
-      })
+  const show = (f: Findings, label: string) => {
+    setFindings(f)
+    setViewing(label)
+    setSelectedSink(f.sink?.name ?? f.coverage.chains[0]?.sink_name ?? null)
+    setError(null)
+  }
+
+  const loadBundled = (name: string) => {
+    getFindings(name)
+      .then((f) => show(f, titleFor(f.build_profile.repo, f.label ?? name)))
       .catch((e) => setError(String(e)))
-  }, [selectedName])
+  }
 
   const overall = findings?.policy.overall_verdict ?? null
-
-  const handleUpload = async (file: File) => {
-    setUploading(true)
-    try {
-      const { name } = await uploadFindings(file)
-      const list = await listFindings()
-      setSummaries(list)
-      setSelectedName(name)
-      setError(null)
-    } catch (e) {
-      setError(String(e))
-    } finally {
-      setUploading(false)
-    }
-  }
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-8">
@@ -260,42 +319,19 @@ export default function App() {
           <h1 className="text-xl font-bold tracking-tight">Entropy Trace</h1>
           <p className="text-sm text-text-dim">Where does your wallet&apos;s randomness actually come from?</p>
         </div>
-        <div className="flex items-center gap-3">
-          <select
-            className="rounded-md border border-border bg-bg-card px-3 py-2 font-mono text-sm text-text"
-            value={selectedName ?? ''}
-            onChange={(e) => setSelectedName(e.target.value)}
-          >
-            {summaries.length === 0 && selectedName !== '' && <option value="">(nothing loaded)</option>}
-            {selectedName === '' && <option value="">Result of the run above</option>}
-            {summaries.map((s) => (
-              <option key={s.name} value={s.name}>
-                {s.label ?? s.name} &middot; {s.overall_verdict}
-              </option>
-            ))}
-          </select>
-          <label className="cursor-pointer rounded-md border border-border px-3 py-2 text-sm text-text-dim hover:border-accent hover:text-text">
-            {uploading ? 'Loading…' : 'Load a saved result'}
-            <input
-              type="file"
-              accept="application/json"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0]
-                if (file) void handleUpload(file)
-                e.target.value = ''
-              }}
-            />
-          </label>
-        </div>
+        <SavedResults
+          bundled={bundled}
+          runs={runs}
+          onLoadBundled={loadBundled}
+          onLoadRun={(r) => show(r.findings, r.label)}
+          onAttach={(f, fileName) => show(f, titleFor(f.build_profile.repo, f.label ?? fileName))}
+        />
       </header>
 
       <RunPanel
         onResult={(f) => {
-          setFindings(f)
-          setSelectedSink(f.sink?.name ?? f.coverage.chains[0]?.sink_name ?? null)
-          setSelectedName('')
-          setError(null)
+          setRuns(saveRun(f))
+          show(f, titleFor(f.build_profile.repo, f.label))
         }}
       />
 
@@ -306,7 +342,8 @@ export default function App() {
       {findings && overall && (
         <div className="mb-6 rounded-lg border border-border bg-bg-raised p-6">
           <VerdictPill verdict={overall} label={`OVERALL: ${overall}`} />
-          <div className="mt-3 text-sm text-text-dim">
+          {viewing && <div className="mt-3 text-sm font-bold text-text">{viewing}</div>}
+          <div className="mt-2 text-sm text-text-dim">
             <div>
               Repo: <span className="font-mono text-text">{findings.build_profile.repo}</span>
             </div>
@@ -321,18 +358,22 @@ export default function App() {
 
       {findings && (
         <div className="mb-6">
-          <CoveragePanel findings={findings} />
+          <CoveragePanel findings={findings} onSelectSink={setSelectedSink} />
         </div>
       )}
 
       {findings && (
-        <div className="grid grid-cols-[280px_1fr] gap-6">
+        <div id="provenance" className="grid grid-cols-[280px_1fr] gap-6">
           <SinksList findings={findings} selected={selectedSink} onSelect={setSelectedSink} />
           <ChainView findings={findings} sinkName={selectedSink} />
         </div>
       )}
 
-      {!findings && !error && <div className="text-text-dim">Loading…</div>}
+      {!findings && !error && (
+        <div className="rounded-lg border border-dashed border-border px-6 py-10 text-center text-sm text-text-dim">
+          Paste a GitHub URL above to analyse it, or load a saved result.
+        </div>
+      )}
     </div>
   )
 }

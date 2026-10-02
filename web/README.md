@@ -28,14 +28,15 @@ make dev       # runs both servers; Ctrl+C stops both
 
 ## The demo interaction
 
-The API's default findings directory is this repo's own `fixtures/`, so
-on first load the UI already has all four committed findings documents
-available in the top-right selector: the two Coldcard fixtures
-(vulnerable/patched) and the two Trust Wallet Core fixtures
-(vulnerable/patched).
+The page opens empty. The API's default findings directory is this repo's own
+`fixtures/`, and **Load a saved result** (top right) lists them under
+"Included examples": the two Coldcard results (vulnerable/patched), the two
+Trust Wallet Core results and libsodium. Results of runs you complete are kept
+in this browser under "Your runs", and "Attach a file..." reads a result file
+from disk (it is parsed in the browser and never uploaded).
 
-Switch the selector from `vulnerable (tag ...) · FAIL` to
-`patched (fixes rng) · WARN` (or back) and watch, without a page reload:
+Load `Coldcard/firmware · vulnerable (tag ...)`, then `patched (fixes rng)` (or
+back) and watch the page change:
 
 - the overall verdict pill flip color (red `FAIL` &rarr; orange `WARN`)
 - the commit/tag in the banner change
@@ -52,11 +53,20 @@ That's the whole point of the tool in one interaction.
 
 ## Running an analysis from the browser
 
-The page also has a **Run an analysis** panel: pick a project and a ref, click
+The page also has an **Analyse a repository** panel: paste a GitHub URL, click
 Run, watch the stages go by, and the provenance view renders the result. This
 chooses what to analyse and discovers nothing: each project's build knowledge
 (backend, `build.dir`, toolchain, entry points) is a profile written by hand,
 and a ref only picks the source tree it is applied to.
+
+- **Which URLs.** `https://github.com/<owner>/<repo>`, optionally followed by
+  `/tree/<ref>`, `/commit/<sha>` or `/releases/tag/<tag>`. A URL that names a ref
+  runs straight away; a bare repository URL offers that project's verified refs
+  (and a field for any other ref, marked unverified). The URL is only a lookup
+  key against the allowlist: it is never fetched, and any other host or
+  repository is rejected.
+- **Tiles.** The four coverage tiles are clickable and say what each number
+  means, with the sinks behind it and, for unknown ones, where the tool stopped.
 
 - **Allowlist.** `data/projects.yaml` lists every project the runner may touch:
   its exact GitHub URL, its profile and its verified refs (refs that were
@@ -95,6 +105,9 @@ interpreter: `make install` then `make dev` does that.
   same directory
 - `GET /api/health` -- liveness + which directory is being served
 - `GET /api/projects` -- the allowlist: key, name, URL, verified refs, cache state
+- `POST /api/resolve` `{url}` -- match a pasted GitHub URL to an allowlisted
+  project and, if the URL names one, a ref (400 not a supported URL or repository,
+  422 the named ref does not exist, 503 still cloning); starts nothing
 - `POST /api/runs` `{project, ref}` -- start a run (400 not allowlisted or a
   malformed ref, 422 ref not in that repository, 503 still cloning); returns an id
 - `GET /api/runs/{id}?since=N` -- status, stage, outcome and the log lines from N

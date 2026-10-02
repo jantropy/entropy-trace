@@ -25,6 +25,17 @@ export interface ProjectList {
   verified_count: number
 }
 
+export interface ResolvedUrl {
+  project: string
+  name: string
+  url: string
+  verified_refs: VerifiedRef[]
+  // The ref the URL named, or null for a bare repository URL.
+  ref: string | null
+  verified: boolean | null
+  verified_label: string | null
+}
+
 export type Stage = 'prepare' | 'build_set' | 'preprocess' | 'sink_location' | 'chain_walk' | 'done'
 
 export interface RunOutcome {
@@ -70,6 +81,14 @@ async function json<T>(res: Response): Promise<T> {
 
 export function listProjects(): Promise<ProjectList> {
   return fetch(`${BASE}/projects`).then((r) => json<ProjectList>(r))
+}
+
+export function resolveUrl(url: string): Promise<ResolvedUrl> {
+  return fetch(`${BASE}/resolve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url }),
+  }).then((r) => json<ResolvedUrl>(r))
 }
 
 export function startRun(project: string, ref: string): Promise<{ id: string; verified: boolean }> {

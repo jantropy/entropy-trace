@@ -26,7 +26,16 @@ import runner
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from projects import AllowlistError, InvalidRef, UnknownProject, get_project, load_projects
+from projects import (
+    AllowlistError,
+    InvalidRef,
+    InvalidUrl,
+    UnknownProject,
+    find_project_by_url,
+    get_project,
+    load_projects,
+    parse_repo_url,
+)
 from pydantic import BaseModel, ConfigDict, Field
 
 # Directory findings.json files are served from and uploaded into.
@@ -104,6 +113,7 @@ def list_findings() -> list[dict]:
                 "schema_version": doc.get("schema_version"),
                 "overall_verdict": (doc.get("policy") or {}).get("overall_verdict"),
                 "commit": (doc.get("build_profile") or {}).get("commit"),
+                "repo": (doc.get("build_profile") or {}).get("repo"),
             }
         )
     return out
@@ -194,6 +204,44 @@ def list_projects() -> dict:
             }
         )
     return {"projects": out, "verified_count": len(out)}
+
+
+class ResolveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    url: str = Field(max_length=300)
+
+
+@app.post("/api/resolve")
+def resolve_url(req: ResolveRequest) -> dict:
+    """Turn a pasted GitHub URL into an allowlisted project and, when the URL
+    names one, a ref. The URL is only a lookup key: nothing is fetched from it,
+    and a repository that is not in the allowlist is rejected here."""
+    projects = _projects()
+    try:
+        pasted = parse_repo_url(req.url)
+        project = find_project_by_url(projects, pasted)
+    except (InvalidUrl, UnknownProject) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    out = {
+        "project": project.key,
+        "name": project.name,
+        "url": project.url,
+        "verified_refs": [{"ref": r.ref, "label": r.label} for r in project.refs],
+        "ref": None,
+        "verified": None,
+        "verified_label": None,
+    }
+    if pasted.candidates:
+        try:
+            out["ref"], _sha, out["verified"], out["verified_label"] = runner.resolve_url_ref(
+                project, pasted.candidates
+            )
+        except runner.RefRejected as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except runner.NotReady as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return out
 
 
 class RunRequest(BaseModel):

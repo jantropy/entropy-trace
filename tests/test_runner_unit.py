@@ -12,7 +12,17 @@ sys.path.insert(0, WEB_API_DIR)
 
 import projects as projects_mod  # noqa: E402
 import runner  # noqa: E402
-from projects import AllowlistError, InvalidRef, UnknownProject, get_project, load_projects, validate_ref  # noqa: E402
+from projects import (  # noqa: E402
+    AllowlistError,
+    InvalidRef,
+    InvalidUrl,
+    UnknownProject,
+    find_project_by_url,
+    get_project,
+    load_projects,
+    parse_repo_url,
+    validate_ref,
+)
 
 
 def _write_allowlist(tmp_path, body: str) -> str:
@@ -188,3 +198,62 @@ def test_build_evidence_reports_a_missing_sconstruct_only_when_it_is_missing(tmp
     (tmp_path / "core" / "SConstruct").write_text("")
     (tmp_path / "embed" / "xtask").rmdir()
     assert runner.build_evidence(project, profile, str(tmp_path)) == ""
+
+
+# --- pasted URLs --------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text, candidates",
+    [
+        ("https://github.com/Coldcard/firmware", ()),
+        ("github.com/coldcard/firmware", ()),
+        ("https://www.github.com/Coldcard/firmware/", ()),
+        ("https://github.com/Coldcard/firmware.git", ()),
+        ("  https://github.com/Coldcard/firmware  ", ()),
+        ("https://github.com/Coldcard/firmware/tree/main", ("main",)),
+        ("https://github.com/Coldcard/firmware/commit/ca72463709f4e3f8964952039d5caf955f566a87", ("ca72463709f4e3f8964952039d5caf955f566a87",)),
+        ("https://github.com/Coldcard/firmware/releases/tag/2026-07-01T1730-v5.5.1", ("2026-07-01T1730-v5.5.1",)),
+        # a ref with a slash, then a path inside the tree: longest candidate first
+        ("https://github.com/trezor/trezor-firmware/tree/core/v2.9.2/core/src", ("core/v2.9.2/core/src", "core/v2.9.2/core", "core/v2.9.2", "core")),
+    ],
+)
+def test_pasted_github_urls_are_parsed(text, candidates):
+    assert parse_repo_url(text).candidates == candidates
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        None,
+        "Coldcard/firmware",
+        "https://gitlab.com/Coldcard/firmware",
+        "https://evil.example/github.com/Coldcard/firmware",
+        "https://github.com.evil.example/Coldcard/firmware",
+        "http://github.com/Coldcard/firmware",
+        "git@github.com:Coldcard/firmware.git",
+        "https://user:pw@github.com/Coldcard/firmware",
+        "https://github.com/Coldcard",
+        "https://github.com/Coldcard/firmware?tab=readme",
+        "https://github.com/Coldcard/firmware#readme",
+        "https://github.com/Coldcard/firmware/blob/master/README.md",
+        "https://github.com/Coldcard/firmware/issues/1",
+        "https://github.com/Coldcard/firmware/tree",
+        "https://github.com/Coldcard/firmware/commit/a/b",
+        "https://github.com/Coldcard/firmware two",
+        "x" * 400,
+    ],
+)
+def test_other_urls_are_rejected(text):
+    with pytest.raises(InvalidUrl):
+        parse_repo_url(text)
+
+
+def test_a_url_matches_the_allowlist_case_insensitively_and_nothing_else():
+    projects = load_projects()
+    assert find_project_by_url(projects, parse_repo_url("https://github.com/COLDCARD/Firmware/tree/master")).key == "coldcard"
+    assert find_project_by_url(projects, parse_repo_url("github.com/jedisct1/libsodium.git")).key == "libsodium"
+    for outside in ("https://github.com/evil/repo", "https://github.com/Coldcard/micropython", "https://github.com/Coldcard/firmware-fork"):
+        with pytest.raises(UnknownProject):
+            find_project_by_url(projects, parse_repo_url(outside))

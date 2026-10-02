@@ -39,6 +39,10 @@ class InvalidRef(ValueError):
     """The ref string is not something this runner will pass to git."""
 
 
+class InvalidUrl(ValueError):
+    """The pasted text is not a GitHub repository URL this runner understands."""
+
+
 @dataclasses.dataclass(frozen=True)
 class VerifiedRef:
     ref: str
@@ -174,3 +178,53 @@ def validate_ref(ref: object) -> str:
     if not isinstance(ref, str) or not REF_RE.match(ref) or any(bad in ref for bad in _BAD_REF_SUBSTRINGS):
         raise InvalidRef(f"{ref!r} is not a branch name, tag name or commit SHA")
     return ref
+
+
+# A pasted URL is only ever a lookup key into the allowlist: it is parsed, matched
+# against the allowlisted URLs and discarded. It is never fetched or cloned.
+_PASTED_URL_RE = re.compile(
+    r"^(?:https://)?(?:www\.)?github\.com/(?P<owner>[A-Za-z0-9._-]+)/(?P<repo>[A-Za-z0-9._-]+?)(?:\.git)?(?P<rest>/.*)?$",
+    re.IGNORECASE,
+)
+
+
+@dataclasses.dataclass(frozen=True)
+class PastedUrl:
+    owner_repo: str  # lowercase "owner/repo"
+    # Ref candidates named by the URL, longest first. Empty for a bare repository
+    # URL. A branch like `release/1.0` is ambiguous inside /tree/release/1.0/src,
+    # so the caller tries each against the repository's real refs.
+    candidates: tuple[str, ...]
+
+
+def parse_repo_url(text: object) -> PastedUrl:
+    """Accept github.com/<owner>/<repo>, optionally followed by /tree/<ref>,
+    /commit/<sha> or /releases/tag/<tag>. Anything else is rejected."""
+    if not isinstance(text, str):
+        raise InvalidUrl("expected a GitHub URL")
+    text = text.strip()
+    if not text or len(text) > 300 or any(c in text for c in "?#@ \t\r\n\\"):
+        raise InvalidUrl("that does not look like a plain GitHub repository URL")
+    m = _PASTED_URL_RE.match(text.rstrip("/"))
+    if not m:
+        raise InvalidUrl("expected https://github.com/<owner>/<repo>, optionally with /tree/<ref>")
+    owner_repo = f"{m['owner']}/{m['repo']}".lower()
+    segments = [seg for seg in (m["rest"] or "").split("/") if seg]
+    if not segments:
+        return PastedUrl(owner_repo, ())
+    if segments[0] == "tree" and len(segments) > 1:
+        tail = segments[1:]
+    elif segments[0] == "commit" and len(segments) == 2:
+        tail = segments[1:]
+    elif segments[0] == "releases" and len(segments) > 2 and segments[1] == "tag":
+        tail = segments[2:]
+    else:
+        raise InvalidUrl("use the repository URL, or a /tree/<ref>, /commit/<sha> or /releases/tag/<tag> URL")
+    return PastedUrl(owner_repo, tuple("/".join(tail[:n]) for n in range(len(tail), 0, -1)))
+
+
+def find_project_by_url(projects: dict[str, Project], pasted: PastedUrl) -> Project:
+    for project in projects.values():
+        if project.url.removeprefix("https://github.com/").lower() == pasted.owner_repo:
+            return project
+    raise UnknownProject(f"github.com/{pasted.owner_repo} is not a repository this runner is set up for")

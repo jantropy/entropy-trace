@@ -1,9 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { getRun, getRunResult, listProjects, startRun } from './runApi'
-import type { ProjectInfo, RunOutcome, RunSnapshot, Stage } from './runApi'
+import { getRun, getRunResult, listProjects, resolveUrl, startRun } from './runApi'
+import type { ProjectInfo, ResolvedUrl, RunOutcome, RunSnapshot, Stage } from './runApi'
 import type { Findings } from './types'
-
-const OTHER = '__other__'
 
 const STAGES: { key: Exclude<Stage, 'done'>; label: string }[] = [
   { key: 'prepare', label: 'Checkout' },
@@ -95,15 +93,26 @@ function OutcomeNote({ outcome }: { outcome: RunOutcome }) {
   )
 }
 
+function UnverifiedBadge() {
+  return (
+    <span className="mr-2 rounded border border-dashed border-text-dim px-1.5 py-0.5 font-mono text-xs uppercase text-text-dim">
+      unverified
+    </span>
+  )
+}
+
 export default function RunPanel({ onResult }: { onResult: (findings: Findings) => void }) {
   const [projects, setProjects] = useState<ProjectInfo[]>([])
   const [verifiedCount, setVerifiedCount] = useState(0)
-  const [projectKey, setProjectKey] = useState('')
-  const [refChoice, setRefChoice] = useState('')
-  const [otherRef, setOtherRef] = useState('')
   const [loadError, setLoadError] = useState<string | null>(null)
 
+  const [urlText, setUrlText] = useState('')
+  const [resolved, setResolved] = useState<ResolvedUrl | null>(null)
+  const [otherRef, setOtherRef] = useState('')
+  const [resolving, setResolving] = useState(false)
+
   const [running, setRunning] = useState(false)
+  const [target, setTarget] = useState<{ name: string; ref: string; verified: boolean } | null>(null)
   const [startError, setStartError] = useState<string | null>(null)
   const [snapshot, setSnapshot] = useState<RunSnapshot | null>(null)
   const [logs, setLogs] = useState<string[]>([])
@@ -115,10 +124,6 @@ export default function RunPanel({ onResult }: { onResult: (findings: Findings) 
       .then((p) => {
         setProjects(p.projects)
         setVerifiedCount(p.verified_count)
-        if (p.projects[0]) {
-          setProjectKey(p.projects[0].key)
-          setRefChoice(p.projects[0].verified_refs[0]?.ref ?? OTHER)
-        }
       })
       .catch((e) => setLoadError(String(e.message ?? e)))
   }, [])
@@ -127,28 +132,21 @@ export default function RunPanel({ onResult }: { onResult: (findings: Findings) 
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
   }, [logs])
 
-  // Picking something else clears the previous run's progress, so the panel
-  // never shows one project's log under another project's name.
   const clearRun = () => {
     setSnapshot(null)
     setLogs([])
     setStartError(null)
+    setTarget(null)
   }
 
-  const project = projects.find((p) => p.key === projectKey)
-  const isOther = refChoice === OTHER
-  const chosenRef = isOther ? otherRef.trim() : refChoice
-
-  const run = async () => {
-    if (!project || !chosenRef) return
+  const run = async (projectKey: string, name: string, ref: string, verified: boolean) => {
     const token = ++runToken.current
     setRunning(true)
-    setStartError(null)
-    setSnapshot(null)
-    setLogs([])
+    clearRun()
+    setTarget({ name, ref, verified })
     let id: string
     try {
-      id = (await startRun(project.key, chosenRef)).id
+      id = (await startRun(projectKey, ref)).id
     } catch (e) {
       setStartError(String((e as Error).message ?? e))
       setRunning(false)
@@ -156,9 +154,9 @@ export default function RunPanel({ onResult }: { onResult: (findings: Findings) 
     }
     let offset = 0
     let failures = 0
-    // Plain polling, once a second: the version that cannot half-fail. A
-    // few dropped requests in a row are tolerated; a run keeps going on
-    // the server regardless of what the browser sees.
+    // Plain polling, once a second: the version that cannot half-fail. A few
+    // dropped requests in a row are tolerated; the run carries on server-side
+    // whatever the browser sees.
     for (;;) {
       if (token !== runToken.current) return
       try {
@@ -189,15 +187,37 @@ export default function RunPanel({ onResult }: { onResult: (findings: Findings) 
     setRunning(false)
   }
 
+  // Resolve what was pasted. A URL that names a ref runs straight away; a bare
+  // repository URL gets a choice of refs first.
+  const submit = async (text: string) => {
+    if (!text.trim() || running || resolving) return
+    setResolving(true)
+    setResolved(null)
+    clearRun()
+    try {
+      const r = await resolveUrl(text)
+      setResolved(r)
+      setOtherRef('')
+      if (r.ref) await run(r.project, r.name, r.ref, !!r.verified)
+    } catch (e) {
+      setStartError(String((e as Error).message ?? e))
+    } finally {
+      setResolving(false)
+    }
+  }
+
+  const cacheState = projects.find((p) => p.key === resolved?.project)?.cache
   const finished = snapshot?.status === 'succeeded' || snapshot?.status === 'failed'
   const failedStage = snapshot?.outcome?.kind === 'failed' ? snapshot.outcome.stage : null
+  const busy = running || resolving
 
   return (
     <section className="mb-8 rounded-lg border border-border bg-bg-card p-6">
-      <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-text-dim">Run an analysis</h2>
+      <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-text-dim">Analyse a repository</h2>
       <p className="mb-4 text-sm text-text-dim">
-        Pick a project and a ref. This chooses what to analyse; it discovers nothing. Each project's build knowledge
-        (its build system, directory, toolchain and entry points) is a profile we wrote.
+        Paste a GitHub URL. This chooses what to analyse; it discovers nothing. Each project&apos;s build knowledge (its
+        build system, directory, toolchain and entry points) is a profile we wrote, and only repositories we have one
+        for can be analysed.
       </p>
 
       {loadError && (
@@ -206,89 +226,107 @@ export default function RunPanel({ onResult }: { onResult: (findings: Findings) 
         </div>
       )}
 
-      <div className="grid gap-4 md:grid-cols-[1fr_1fr_auto] md:items-end">
-        <label className="block text-xs text-text-dim">
-          Project
-          <select
-            className="mt-1 block w-full rounded-md border border-border bg-bg-raised px-3 py-2 font-mono text-sm text-text"
-            value={projectKey}
-            disabled={running}
-            onChange={(e) => {
-              const p = projects.find((x) => x.key === e.target.value)
-              setProjectKey(e.target.value)
-              setRefChoice(p?.verified_refs[0]?.ref ?? OTHER)
-              setOtherRef('')
-              clearRun()
-            }}
-          >
-            {projects.map((p) => (
-              <option key={p.key} value={p.key}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="block text-xs text-text-dim">
-          Ref
-          <select
-            className="mt-1 block w-full rounded-md border border-border bg-bg-raised px-3 py-2 font-mono text-sm text-text"
-            value={refChoice}
-            disabled={running || !project}
-            onChange={(e) => {
-              setRefChoice(e.target.value)
-              clearRun()
-            }}
-          >
-            <optgroup label="Verified (run before, expected to work)">
-              {project?.verified_refs.map((r) => (
-                <option key={r.ref} value={r.ref}>
-                  {r.label}
-                </option>
-              ))}
-            </optgroup>
-            <optgroup label="Unverified">
-              <option value={OTHER}>Other ref (unverified)…</option>
-            </optgroup>
-          </select>
-        </label>
-
+      <form
+        className="flex flex-col gap-3 md:flex-row"
+        onSubmit={(e) => {
+          e.preventDefault()
+          void submit(urlText)
+        }}
+      >
+        <input
+          className="min-w-0 flex-1 rounded-md border border-border bg-bg-raised px-3 py-2 font-mono text-sm text-text placeholder:text-text-dim"
+          placeholder="https://github.com/owner/repo  or  .../tree/<tag>"
+          aria-label="GitHub URL"
+          value={urlText}
+          disabled={busy}
+          onChange={(e) => {
+            setUrlText(e.target.value)
+            setResolved(null)
+            setStartError(null)
+          }}
+        />
         <button
-          onClick={() => void run()}
-          disabled={running || !project || !chosenRef}
+          type="submit"
+          disabled={busy || !urlText.trim()}
           className="rounded-md border border-accent bg-accent px-6 py-2 text-sm font-bold text-bg disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {running ? 'Running…' : 'Run'}
+          {running ? 'Running…' : resolving ? 'Checking…' : 'Run'}
         </button>
-      </div>
+      </form>
 
-      {isOther && (
-        <div className="mt-4">
-          <label className="block text-xs text-text-dim">
-            Branch, tag or commit in {project?.url}
+      {projects.length > 0 && (
+        <p className="mt-3 text-xs text-text-dim">
+          Supported:{' '}
+          {projects.map((p, i) => (
+            <span key={p.key}>
+              {i > 0 && ', '}
+              <button
+                type="button"
+                disabled={busy}
+                className="text-accent underline decoration-dotted underline-offset-2 hover:text-text disabled:opacity-40"
+                onClick={() => {
+                  setUrlText(p.url)
+                  void submit(p.url)
+                }}
+              >
+                {p.name}
+              </button>
+            </span>
+          ))}
+        </p>
+      )}
+
+      {resolved && !resolved.ref && !busy && !target && (
+        <div className="mt-5 rounded-md border border-border bg-bg-raised p-4">
+          <div className="mb-3 text-sm text-text">
+            <span className="font-bold">{resolved.name}</span> is supported. Which ref?
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {resolved.verified_refs.map((r) => (
+              <button
+                key={r.ref}
+                className="rounded-md border border-border bg-bg-card px-3 py-2 text-left text-sm text-text hover:border-accent"
+                onClick={() => void run(resolved.project, resolved.name, r.ref, true)}
+              >
+                {r.label}
+              </button>
+            ))}
+          </div>
+          <p className="mb-2 mt-3 text-xs text-text-dim">Verified refs have been run before and are expected to work.</p>
+          <form
+            className="flex flex-col gap-2 md:flex-row"
+            onSubmit={(e) => {
+              e.preventDefault()
+              if (otherRef.trim()) void submit(`${resolved.url}/tree/${otherRef.trim()}`)
+            }}
+          >
             <input
-              className="mt-1 block w-full rounded-md border border-dashed border-text-dim bg-bg-raised px-3 py-2 font-mono text-sm text-text"
-              placeholder="e.g. main"
+              className="min-w-0 flex-1 rounded-md border border-dashed border-text-dim bg-bg-card px-3 py-2 font-mono text-sm text-text placeholder:text-text-dim"
+              placeholder="or another branch, tag or commit"
+              aria-label="Another ref"
               value={otherRef}
-              disabled={running}
               onChange={(e) => setOtherRef(e.target.value)}
             />
-          </label>
+            <button
+              type="submit"
+              disabled={!otherRef.trim()}
+              className="rounded-md border border-border px-4 py-2 text-sm text-text hover:border-accent disabled:opacity-40"
+            >
+              Run unverified
+            </button>
+          </form>
           <p className="mt-2 text-xs text-text-dim">
-            <span className="mr-2 rounded border border-dashed border-text-dim px-1.5 py-0.5 font-mono uppercase">
-              unverified
-            </span>
-            This ref was never run before and may fail. If it does, you will be told which stage stopped and what that
-            implies.
+            <UnverifiedBadge />A ref that was never run before may fail. If it does, you will be told which stage stopped
+            and what that implies.
           </p>
         </div>
       )}
 
-      {project && project.cache.state !== 'ready' && (
+      {cacheState && cacheState.state !== 'ready' && (
         <p className="mt-3 text-xs text-text-dim">
-          {project.cache.state === 'error'
-            ? `Checkout cache for this project is not ready: ${project.cache.detail}`
-            : `Preparing this project's checkout cache (${project.cache.detail || project.cache.state})…`}
+          {cacheState.state === 'error'
+            ? `Checkout cache for this project is not ready: ${cacheState.detail}`
+            : `Preparing this project's checkout cache (${cacheState.detail || cacheState.state})…`}
         </p>
       )}
 
@@ -303,6 +341,12 @@ export default function RunPanel({ onResult }: { onResult: (findings: Findings) 
 
       {(snapshot || running) && (
         <div className="mt-6 space-y-4">
+          {target && (
+            <div className="text-sm text-text">
+              {!target.verified && <UnverifiedBadge />}
+              <span className="font-bold">{target.name}</span> <span className="font-mono text-text-dim">@ {target.ref}</span>
+            </div>
+          )}
           <StageStrip stage={snapshot?.stage ?? 'prepare'} failedStage={failedStage} finished={!!finished && !failedStage} />
           <pre
             ref={logRef}

@@ -57,6 +57,7 @@ def fake_remote(tmp_path_factory):
     _git(repo, "init", "-q", "-b", "trunk")
     _commit(repo, {"Makefile": MAKEFILE, "gen_key.c": VULN_C}, "v-vuln", tag=True)
     _commit(repo, {"gen_key.c": PATCHED_C}, "v-patched", tag=True)
+    _git(repo, "checkout", "-q", "-B", "release/1.0", "v-patched")  # a ref with a slash in it
     # one broken variant per stage, each branched off the patched commit
     for branch, files in {
         "bad-build": {"Makefile": "all:\n\t@true\n"},
@@ -183,6 +184,66 @@ def test_unknown_run_id_is_a_404(client):
     assert client.get("/api/runs/000000000000").status_code == 404
     assert client.get("/api/runs/../../etc/passwd").status_code in (404, 422)
     assert client.get("/api/runs/not-hex").status_code == 404
+
+
+# --- pasting a URL ----------------------------------------------------------------
+
+BASE_URL = "https://github.com/example/synthetic"
+
+
+def _resolve(client, url):
+    return client.post("/api/resolve", json={"url": url})
+
+
+def test_a_bare_repository_url_resolves_to_the_project_and_offers_its_verified_refs(client):
+    body = _resolve(client, BASE_URL).json()
+    assert body["project"] == "synthetic" and body["ref"] is None
+    assert body["verified_refs"] == [{"ref": "v-vuln", "label": "vulnerable (synthetic)"}]
+
+
+def test_a_tree_url_names_the_ref_and_says_whether_it_is_verified(client):
+    verified = _resolve(client, f"{BASE_URL}/tree/v-vuln").json()
+    assert (verified["ref"], verified["verified"], verified["verified_label"]) == ("v-vuln", True, "vulnerable (synthetic)")
+    unverified = _resolve(client, f"{BASE_URL}/releases/tag/v-patched").json()
+    assert (unverified["ref"], unverified["verified"]) == ("v-patched", False)
+
+
+def test_a_commit_url_resolves(client, fake_remote):
+    sha = subprocess.run(["git", "rev-parse", "v-vuln"], cwd=fake_remote, capture_output=True, text=True).stdout.strip()
+    body = _resolve(client, f"{BASE_URL}/commit/{sha}").json()
+    assert body["ref"] == sha and body["verified"] is True
+
+
+def test_a_ref_with_a_slash_and_a_trailing_path_resolves_to_the_longest_real_ref(client):
+    body = _resolve(client, f"{BASE_URL}/tree/release/1.0/some/dir").json()
+    assert body["ref"] == "release/1.0"
+
+
+def test_the_url_is_case_insensitive_and_tolerates_dot_git(client):
+    assert _resolve(client, "HTTPS://github.com/Example/Synthetic.git/").json()["project"] == "synthetic"
+    assert _resolve(client, "github.com/EXAMPLE/synthetic.git/").json()["project"] == "synthetic"
+
+
+def test_a_repository_that_is_not_allowlisted_is_rejected(client):
+    for url in ("https://github.com/evil/repo", "https://github.com/example/other", "https://evil.example/example/synthetic"):
+        resp = _resolve(client, url)
+        assert resp.status_code == 400, url
+    assert _nothing_was_done(client)
+
+
+def test_a_url_that_names_no_existing_ref_is_a_422(client):
+    resp = _resolve(client, f"{BASE_URL}/tree/no-such-branch/src")
+    assert resp.status_code == 422
+    assert "exists" in resp.json()["detail"]
+
+
+def test_resolve_refuses_extra_fields(client):
+    assert client.post("/api/resolve", json={"url": BASE_URL, "profile": "/etc/passwd"}).status_code == 422
+
+
+def test_resolving_never_starts_a_run_or_touches_the_disk(client):
+    _resolve(client, f"{BASE_URL}/tree/v-vuln")
+    assert _nothing_was_done(client)
 
 
 # --- the three outcomes ------------------------------------------------------
