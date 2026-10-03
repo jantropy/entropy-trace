@@ -162,13 +162,13 @@ def test_refs_that_are_options_expressions_or_shell_syntax_are_rejected(ref):
 # --- derived profile and build evidence ------------------------------------
 
 
-def test_derived_profile_changes_only_the_checkout_commit_and_label(tmp_path):
+def test_derived_profile_changes_only_the_commit_and_label(tmp_path):
     import yaml
 
     project = load_projects()["coldcard"]
     base = yaml.safe_load(open(project.profile))
-    derived = runner.derive_profile(project, str(tmp_path), "a" * 40, "my label")
-    assert derived["repo_root"] == str(tmp_path)
+    derived = runner.derive_profile(project, "a" * 40, "my label")
+    assert "repo_root" not in derived  # the checkout is passed to the CLI, not written into the profile
     assert derived["commit"] == "a" * 40
     assert derived["label"] == "my label"
     for key in ("build", "adapter", "board", "target_yaml", "run_bip32_anchor", "config_values", "repo"):
@@ -177,7 +177,7 @@ def test_derived_profile_changes_only_the_checkout_commit_and_label(tmp_path):
 
 def test_derived_profile_makes_relative_catalogue_paths_absolute(tmp_path):
     project = load_projects()["trustwallet"]
-    derived = runner.derive_profile(project, str(tmp_path), "b" * 40, "x")
+    derived = runner.derive_profile(project, "b" * 40, "x")
     assert os.path.isabs(derived["sinks_yaml"])
     assert os.path.isfile(derived["sinks_yaml"])
 

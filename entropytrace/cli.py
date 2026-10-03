@@ -1,5 +1,9 @@
 """entropytrace.cli - profile-driven pipeline entrypoint.
 
+This is the engine the web runner (web/api/runner.py) and the GitHub Action
+(entrypoint.sh) start as a subprocess, so it keeps a stable contract (flags, exit
+codes, stage markers).
+
 Glue, not new analysis: every step here already exists (buildset.py's two
 backends, symbols.py, analysis/{sinks,slice,registry,policy}.py,
 emit/sarif.py). This module just loads a profile and orchestrates the
@@ -115,8 +119,11 @@ def _normalize_build_dir_paths(chains: list[dict], sinks: list, build_dir: str) 
                     hop["file"] = _prefix_build_dir(hop.get("file"), build_dir)
 
 
-def run_profile(profile_path: str, mode: str = "pr", stub_dir: str | None = None, progress=None) -> dict:
-    """Run the whole pipeline for one profile YAML and return the
+def run_profile(
+    profile_path: str, repo_root: str, mode: str = "pr", stub_dir: str | None = None, progress=None
+) -> dict:
+    """Run the whole pipeline for one profile YAML against the checkout at
+    `repo_root` and return the
     findings.json dict (with `policy` already attached). Writes nothing;
     callers decide what to do with the result.
 
@@ -128,7 +135,7 @@ def run_profile(profile_path: str, mode: str = "pr", stub_dir: str | None = None
         if progress is not None:
             progress(name, phase, **facts)
 
-    profile = load_profile(profile_path)
+    profile = load_profile(profile_path, repo_root)
 
     stub_dir = stub_dir or profile.stub_dir
     if stub_dir is None:
@@ -360,6 +367,7 @@ def _print_stage(name: str, phase: str, **facts) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run the Entropy Trace pipeline for one profile.")
     parser.add_argument("--profile", required=True, help="Path to a profile YAML")
+    parser.add_argument("--repo-root", required=True, help="Path to the checkout the profile is applied to")
     parser.add_argument("--mode", choices=["pr", "audit"], default="pr")
     parser.add_argument("--output", required=True, help="Path to write findings.json")
     parser.add_argument("--sarif-output", help="Path to write SARIF (default: <output>.sarif)")
@@ -370,7 +378,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    findings = run_profile(args.profile, mode=args.mode, progress=_print_stage if args.report_stages else None)
+    findings = run_profile(args.profile, args.repo_root, mode=args.mode, progress=_print_stage if args.report_stages else None)
 
     with open(args.output, "w") as f:
         json.dump(findings, f, indent=2)

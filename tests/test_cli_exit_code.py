@@ -6,6 +6,12 @@ from entropytrace.cli import exit_code_for, run_profile
 
 SYNTHETIC_DIR = os.path.join(os.path.dirname(__file__), "..", "corpus", "synthetic")
 
+def _run(rel_path, mode):
+    """A synthetic case's checkout is the directory its profile sits in."""
+    path = os.path.join(SYNTHETIC_DIR, rel_path)
+    return run_profile(path, os.path.dirname(path), mode=mode)
+
+
 # (profile path relative to SYNTHETIC_DIR, expected overall_verdict)
 _CASES = [
     ("case1_csprng_swap/vulnerable/ci-profile.yaml", "FAIL"),
@@ -20,13 +26,13 @@ _CASES = [
 
 @pytest.mark.parametrize("rel_path,expected_verdict", _CASES)
 def test_overall_verdict_matches_expected(rel_path, expected_verdict):
-    findings = run_profile(os.path.join(SYNTHETIC_DIR, rel_path), mode="pr")
+    findings = _run(rel_path, "pr")
     assert findings["policy"]["overall_verdict"] == expected_verdict
 
 
 @pytest.mark.parametrize("rel_path,expected_verdict", _CASES)
 def test_pr_mode_exit_code(rel_path, expected_verdict):
-    findings = run_profile(os.path.join(SYNTHETIC_DIR, rel_path), mode="pr")
+    findings = _run(rel_path, "pr")
     code = exit_code_for(findings["policy"]["overall_verdict"], "pr")
     # every case's verdict is FAIL or PASS (no bare UNKNOWN sink survives
     # policy filtering here since case4's is entropy_critical=False) --
@@ -36,7 +42,7 @@ def test_pr_mode_exit_code(rel_path, expected_verdict):
 
 @pytest.mark.parametrize("rel_path,expected_verdict", _CASES)
 def test_audit_mode_exit_code(rel_path, expected_verdict):
-    findings = run_profile(os.path.join(SYNTHETIC_DIR, rel_path), mode="audit")
+    findings = _run(rel_path, "audit")
     code = exit_code_for(findings["policy"]["overall_verdict"], "audit")
     assert code == (1 if expected_verdict == "FAIL" else 0)
 
@@ -45,7 +51,7 @@ def test_case4_deterministic_nonce_never_becomes_a_finding():
     """The one case that must NOT be reported: entropy_critical=False
     means it never gets a policy verdict at all, regardless of what its
     (irrelevant) trace status happens to be."""
-    findings = run_profile(os.path.join(SYNTHETIC_DIR, "case4_deterministic_nonce/ci-profile.yaml"), mode="pr")
+    findings = _run("case4_deterministic_nonce/ci-profile.yaml", "pr")
     assert findings["policy"]["verdicts"] == []
     assert findings["policy"]["overall_verdict"] == "PASS"
     # it does still show up in the coverage sweep itself -- never silently

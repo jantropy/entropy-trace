@@ -15,6 +15,7 @@
 
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 
@@ -34,29 +35,24 @@ GCC11_TARGET_YAML = os.path.join(
     os.path.dirname(__file__), "..", "data", "targets", "arm-none-eabi-cortex-m4-gcc11.yaml"
 )
 
-PATCHED_REPO = "/Users/satadel/scratch-entropy/coldcard-patched"
-
-_needs_worktree = pytest.mark.skipif(
-    not os.path.isdir(PATCHED_REPO),
-    reason="scratch worktree not present",
-)
+# The tests that preprocess a real Coldcard file use the patched checkout from
+# tests/conftest.py (--real-checkouts); the rest need no checkout.
 
 
 @pytest.fixture(scope="module")
-def random_c_preprocessed():
-    units = get_build_set(PATCHED_REPO, "COLDCARD_MK4")
+def random_c_preprocessed(coldcard_patched, tmp_path_factory):
+    units = get_build_set(coldcard_patched, "COLDCARD_MK4")
     tu = next(
         u for u in units
         if u.source == "boards/COLDCARD_MK4/c-modules/libngu/random.c"
     )
-    stub_dir = "/Users/satadel/scratch-entropy/test-targetmacros"
+    stub_dir = str(tmp_path_factory.mktemp("targetmacros"))
     ensure_stub_genhdr(stub_dir)
     text, err = preprocess_tu(tu, stub_dir)
     assert err is None, err
     return text
 
 
-@_needs_worktree
 def test_no_host_identity_macros_leak_into_preprocessed_output(random_c_preprocessed):
     """__APPLE__/__MACH__/__linux__ must never survive as live macros --
     checked by looking for what their expansions would leave behind
@@ -72,7 +68,6 @@ def test_no_host_identity_macros_leak_into_preprocessed_output(random_c_preproce
     )
 
 
-@_needs_worktree
 def test_chip_trng_32_expands_to_rng_get_not_arc4random(random_c_preprocessed):
     """The exact regression, pinned directly."""
     m = re.search(r"uint32_t chip = (\w+)\(\);", random_c_preprocessed)
@@ -80,7 +75,7 @@ def test_chip_trng_32_expands_to_rng_get_not_arc4random(random_c_preprocessed):
     assert m.group(1) == "rng_get"
 
 
-@_needs_worktree
+@pytest.mark.skipif(shutil.which("gcc") is None, reason="needs gcc")
 def test_arm_target_macros_are_present_in_preprocessed_output():
     """A file that actually references an ARM-only predefined macro
     should see it defined -- confirms the injected header, not just the
@@ -211,17 +206,17 @@ def _host_only_identity_macros(target_yaml: str | None = None) -> set[str]:
 
 
 @pytest.fixture(scope="module")
-def random_c_macro_table():
+def random_c_macro_table(coldcard_patched, tmp_path_factory):
     """Same TU as random_c_preprocessed, but the full post-preprocessing
     macro table (-dM -E) rather than the expanded source (-E) -- built
     from the project's own _rewrite_for_host_preprocess command so this
     tracks the real pipeline's flags, not a hand-copied approximation."""
-    units = get_build_set(PATCHED_REPO, "COLDCARD_MK4")
+    units = get_build_set(coldcard_patched, "COLDCARD_MK4")
     tu = next(
         u for u in units
         if u.source == "boards/COLDCARD_MK4/c-modules/libngu/random.c"
     )
-    stub_dir = "/Users/satadel/scratch-entropy/test-targetmacros-dm"
+    stub_dir = str(tmp_path_factory.mktemp("targetmacros-dm"))
     ensure_stub_genhdr(stub_dir)
     out_path = os.path.join(stub_dir, "_out_dm.i")
     cmd = _rewrite_for_host_preprocess(tu, stub_dir, out_path)
@@ -232,7 +227,6 @@ def random_c_macro_table():
         return f.read()
 
 
-@_needs_worktree
 @pytest.mark.xfail(
     strict=True,
     reason=(
@@ -265,7 +259,7 @@ def test_no_host_libc_identity_macros_leak_into_preprocessed_output(random_c_mac
 
 
 @pytest.fixture(scope="module")
-def random_c_macro_table_with_sysroot():
+def random_c_macro_table_with_sysroot(coldcard_patched, tmp_path_factory):
     """Same as random_c_macro_table, but preprocessed under the gcc11
     target YAML's sysroot block -- fetches and caches the real ARM
     sysroot via Docker on first use; skipped, not failed, if Docker is
@@ -273,12 +267,12 @@ def random_c_macro_table_with_sysroot():
     regression."""
     if subprocess.run(["docker", "info"], capture_output=True).returncode != 0:
         pytest.skip("Docker not available -- cannot fetch the ARM sysroot")
-    units = get_build_set(PATCHED_REPO, "COLDCARD_MK4")
+    units = get_build_set(coldcard_patched, "COLDCARD_MK4")
     tu = next(
         u for u in units
         if u.source == "boards/COLDCARD_MK4/c-modules/libngu/random.c"
     )
-    stub_dir = "/Users/satadel/scratch-entropy/test-targetmacros-sysroot"
+    stub_dir = str(tmp_path_factory.mktemp("targetmacros-sysroot"))
     ensure_stub_genhdr(stub_dir)
     out_path = os.path.join(stub_dir, "_out_dm.i")
     cmd = _rewrite_for_host_preprocess(tu, stub_dir, out_path, target_yaml=GCC11_TARGET_YAML)
@@ -289,7 +283,6 @@ def random_c_macro_table_with_sysroot():
         return f.read()
 
 
-@_needs_worktree
 def test_no_host_libc_identity_macros_leak_with_real_sysroot(random_c_macro_table_with_sysroot):
     """The guard above now passes once a real ARM sysroot (-nostdinc +
     -isystem) is wired in -- expressed as its own test rather than by

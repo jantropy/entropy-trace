@@ -4,9 +4,16 @@ import tempfile
 import pytest
 import yaml
 
-from entropytrace.profiles import ProfileError, load_profile, resolve_config_values
+from entropytrace.profiles import ProfileError, resolve_config_values
+from entropytrace.profiles import load_profile as _load_profile
 
 SYNTHETIC_DIR = os.path.join(os.path.dirname(__file__), "..", "corpus", "synthetic")
+
+
+def load_profile(path, repo_root=None):
+    """The profile is written into the checkout's own directory by these tests,
+    so that directory is the checkout unless a test says otherwise."""
+    return _load_profile(path, repo_root or os.path.dirname(path))
 
 
 def _write_profile(tmp_path, data):
@@ -16,52 +23,59 @@ def _write_profile(tmp_path, data):
     return str(path)
 
 
-def test_missing_repo_root_raises_named_error(tmp_path):
+def test_a_repo_root_in_the_profile_is_rejected_because_the_caller_supplies_it(tmp_path):
+    path = _write_profile(tmp_path, {"repo_root": ".", "build": {"backend": "make"}})
+    with pytest.raises(ProfileError, match="repo_root.*caller"):
+        _load_profile(path, str(tmp_path))
+
+
+def test_the_checkout_comes_from_the_caller_and_is_made_absolute(tmp_path, monkeypatch):
     path = _write_profile(tmp_path, {"build": {"backend": "make"}})
-    with pytest.raises(ProfileError, match="repo_root"):
-        load_profile(path)
+    assert _load_profile(path, str(tmp_path / "elsewhere")).repo_root == str(tmp_path / "elsewhere")
+    monkeypatch.chdir(tmp_path)
+    assert _load_profile(path, "rel").repo_root == str(tmp_path / "rel")
 
 
 def test_missing_build_raises_named_error(tmp_path):
-    path = _write_profile(tmp_path, {"repo_root": "."})
+    path = _write_profile(tmp_path, {})
     with pytest.raises(ProfileError, match="build"):
         load_profile(path)
 
 
 def test_missing_build_backend_raises_named_error(tmp_path):
-    path = _write_profile(tmp_path, {"repo_root": ".", "build": {}})
+    path = _write_profile(tmp_path, {"build": {}})
     with pytest.raises(ProfileError, match="build.backend"):
         load_profile(path)
 
 
 def test_unknown_build_backend_raises_named_error(tmp_path):
-    path = _write_profile(tmp_path, {"repo_root": ".", "build": {"backend": "ninja"}})
+    path = _write_profile(tmp_path, {"build": {"backend": "ninja"}})
     with pytest.raises(ProfileError, match="ninja"):
         load_profile(path)
 
 
 def test_compile_commands_backend_without_path_raises(tmp_path):
-    path = _write_profile(tmp_path, {"repo_root": ".", "build": {"backend": "compile_commands"}})
+    path = _write_profile(tmp_path, {"build": {"backend": "compile_commands"}})
     with pytest.raises(ProfileError, match="compile_commands"):
         load_profile(path)
 
 
 def test_adapter_without_board_raises(tmp_path):
-    path = _write_profile(tmp_path, {"repo_root": ".", "build": {"backend": "make"}, "adapter": "coldcard"})
+    path = _write_profile(tmp_path, {"build": {"backend": "make"}, "adapter": "coldcard"})
     with pytest.raises(ProfileError, match="board"):
         load_profile(path)
 
 
 def test_unknown_adapter_raises(tmp_path):
     path = _write_profile(
-        tmp_path, {"repo_root": ".", "build": {"backend": "make"}, "adapter": "unknown-thing", "board": "X"}
+        tmp_path, {"build": {"backend": "make"}, "adapter": "unknown-thing", "board": "X"}
     )
     with pytest.raises(ProfileError, match="unknown-thing"):
         load_profile(path)
 
 
 def test_minimal_valid_profile_loads(tmp_path):
-    path = _write_profile(tmp_path, {"repo_root": ".", "build": {"backend": "make"}})
+    path = _write_profile(tmp_path, {"build": {"backend": "make"}})
     profile = load_profile(path)
     assert profile.repo_root == str(tmp_path)
     assert profile.build == {"backend": "make"}
@@ -76,10 +90,10 @@ def test_target_yaml_null_is_distinct_from_unset(tmp_path):
     (explicitly disables target-macro substitution), NOT the same as
     omitting the key entirely (target_kwargs={}, meaning "use symbols.py's
     own default"). Both must be honest, distinguishable states."""
-    unset_path = _write_profile(tmp_path, {"repo_root": ".", "build": {"backend": "make"}})
+    unset_path = _write_profile(tmp_path, {"build": {"backend": "make"}})
     explicit_none_path = tmp_path / "explicit.yaml"
     with open(explicit_none_path, "w") as f:
-        f.write("repo_root: .\nbuild:\n  backend: make\ntarget_yaml: null\n")
+        f.write("build:\n  backend: make\ntarget_yaml: null\n")
 
     unset_profile = load_profile(unset_path)
     explicit_profile = load_profile(str(explicit_none_path))
@@ -95,7 +109,7 @@ def test_real_synthetic_corpus_profile_loads_and_runs():
     from entropytrace.cli import run_profile
 
     profile_path = os.path.join(SYNTHETIC_DIR, "case1_csprng_swap", "vulnerable", "ci-profile.yaml")
-    findings = run_profile(profile_path, mode="pr")
+    findings = run_profile(profile_path, os.path.dirname(profile_path), mode="pr")
     assert findings["policy"]["overall_verdict"] == "FAIL"
     assert findings["schema_version"] == "1.3.0"
     assert findings["build_profile"]["sysroot"] == {"used": False}
@@ -114,7 +128,7 @@ def test_build_dir_points_make_dash_n_at_a_subdirectory(tmp_path, monkeypatch):
     profile = load_profile(
         _write_profile(
             tmp_path,
-            {"repo_root": str(tmp_path), "build": {"backend": "make", "dir": "sub"}},
+            {"build": {"backend": "make", "dir": "sub"}},
         )
     )
 
@@ -138,7 +152,6 @@ def test_scons_backend_dispatches_with_scons_args_and_dir(tmp_path, monkeypatch)
         _write_profile(
             tmp_path,
             {
-                "repo_root": str(tmp_path),
                 "build": {"backend": "scons", "dir": "sub", "scons_args": ["PYOPT=0"]},
             },
         )
@@ -163,7 +176,6 @@ def test_resolve_config_values_extracts_live_define_with_line_evidence(tmp_path)
         _write_profile(
             tmp_path,
             {
-                "repo_root": str(tmp_path),
                 "build": {"backend": "make"},
                 "config_values": [{"name": "SOME_FLAG", "file": "config.h"}],
             },
@@ -180,7 +192,6 @@ def test_resolve_config_values_raises_named_error_when_macro_not_found(tmp_path)
         _write_profile(
             tmp_path,
             {
-                "repo_root": str(tmp_path),
                 "build": {"backend": "make"},
                 "config_values": [{"name": "MISSING_FLAG", "file": "config.h"}],
             },

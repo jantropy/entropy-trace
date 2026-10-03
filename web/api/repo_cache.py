@@ -266,6 +266,21 @@ def prepare_worktree(project: Project, sha: str, log=_noop) -> str:
     return path
 
 
+def checkout(project: Project, ref: str, log=_noop) -> str:
+    """A ready worktree of `project` at `ref`, cloning and fetching whatever
+    the cache is missing: what a run does before it analyses, for callers (the
+    tests, the report generator) that want the checkout itself. Raises
+    CacheError if the ref does not exist or the checkout cannot be made."""
+    ensure_clone(project, log)
+    sha = resolve_ref(project, ref)
+    if sha is None:
+        fetch(project, log)
+        sha = resolve_ref(project, ref)
+    if sha is None:
+        raise CacheError(f"{ref!r} does not exist in {project.url}")
+    return prepare_worktree(project, sha, log)
+
+
 # --- eviction ----------------------------------------------------------------
 
 KEEP_UNVERIFIED_WORKTREES = int(os.environ.get("ENTROPY_TRACE_KEEP_UNVERIFIED", "2"))

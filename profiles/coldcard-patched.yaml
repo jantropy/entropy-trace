@@ -1,8 +1,7 @@
 # Coldcard's patched commit, as a profile. Same shape as
-# coldcard-vulnerable.yaml - only repo_root/label/commit differ, which is
+# coldcard-vulnerable.yaml - only label/commit differ, which is
 # exactly the point of a profile: the vulnerable/patched difference lives
 # entirely in which real checkout is pointed at, not in any code path.
-repo_root: /Users/satadel/scratch-entropy/coldcard-patched
 label: "patched (fixes rng)"
 commit: "ca72463709f4e3f8964952039d5caf955f566a87"
 repo: "Coldcard/firmware"

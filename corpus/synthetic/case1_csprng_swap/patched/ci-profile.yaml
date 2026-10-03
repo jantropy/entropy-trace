@@ -1,5 +1,4 @@
 label: "case1_csprng_swap patched"
-repo_root: .
 build:
   backend: make
 target_yaml: null

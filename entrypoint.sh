@@ -1,11 +1,12 @@
 #!/bin/sh
 # Entrypoint for the entropy-trace Docker action.
-# Args, in order (from action.yml): profile, mode, output.
+# Args, in order (from action.yml): profile, mode, output, repo-root.
 set -eu
 
 PROFILE="$1"
 MODE="${2:-pr}"
 OUTPUT="${3:-entropy-trace-findings.json}"
+REPO_ROOT="${4:-.}"
 
 cd "$GITHUB_WORKSPACE"
 # PYTHONPATH is already set at image build time to the analyser baked
@@ -29,6 +30,7 @@ fi
 set +e
 python3 -m entropytrace.cli \
     --profile "$PROFILE" \
+    --repo-root "$REPO_ROOT" \
     --mode "$MODE" \
     --output "$OUTPUT" \
     --sarif-output "$SARIF_OUTPUT" \

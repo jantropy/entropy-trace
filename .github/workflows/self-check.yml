@@ -25,18 +25,25 @@ jobs:
       matrix:
         include:
           - profile: corpus/synthetic/case1_csprng_swap/vulnerable/ci-profile.yaml
+            repo-root: corpus/synthetic/case1_csprng_swap/vulnerable
             expected: FAIL
           - profile: corpus/synthetic/case1_csprng_swap/patched/ci-profile.yaml
+            repo-root: corpus/synthetic/case1_csprng_swap/patched
             expected: PASS
           - profile: corpus/synthetic/case2_macro_flip/vulnerable/ci-profile.yaml
+            repo-root: corpus/synthetic/case2_macro_flip/vulnerable
             expected: FAIL
           - profile: corpus/synthetic/case2_macro_flip/patched/ci-profile.yaml
+            repo-root: corpus/synthetic/case2_macro_flip/patched
             expected: PASS
           - profile: corpus/synthetic/case3_symbol_moved/vulnerable/ci-profile.yaml
+            repo-root: corpus/synthetic/case3_symbol_moved/vulnerable
             expected: FAIL
           - profile: corpus/synthetic/case3_symbol_moved/patched/ci-profile.yaml
+            repo-root: corpus/synthetic/case3_symbol_moved/patched
             expected: PASS
           - profile: corpus/synthetic/case4_deterministic_nonce/ci-profile.yaml
+            repo-root: corpus/synthetic/case4_deterministic_nonce
             expected: PASS
     steps:
       - uses: actions/checkout@v4
@@ -47,6 +54,7 @@ jobs:
         uses: ./
         with:
           profile: ${{ matrix.profile }}
+          repo-root: ${{ matrix.repo-root }}
           mode: pr
           output: entropy-trace-findings.json
 

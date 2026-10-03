@@ -1,14 +1,16 @@
 """entropytrace.profiles - load, validate, and resolve a profile YAML into
 the build set plus configuration the rest of the pipeline needs.
 
+A profile YAML declares how to analyse a project, never where its checkout
+is: the caller supplies the checkout (`load_profile(path, repo_root)`), so the
+same profile applies to any copy of the project and no machine's directory
+layout is committed. A profile that carries a `repo_root` key is rejected.
+
 A profile YAML declares:
-  repo_root       (required) - path to the checked-out repo/dir to
-                    analyse; relative paths resolve against the profile
-                    file's own directory.
   build           (required) - a dict with:
       backend         "make" (default) or "compile_commands"
       dir             (make backend only, optional) - subdirectory of
-                      repo_root to actually run `make -n` in, when the
+                      the checkout to actually run `make -n` in, when the
                       real build isn't driven from repo_root itself.
       make_vars       dict of K=V passed to `make -n` (make backend)
       fail_substring  stderr substring that turns a nonzero make -n exit
@@ -59,7 +61,7 @@ A profile YAML declares:
                     changes.
 
 Never falls back to a default silently for a field with no sensible one
-(repo_root, build, build.backend, board-when-adapter-is-set): a missing
+(build, build.backend, board-when-adapter-is-set): a missing
 one raises `ProfileError` naming exactly which field is missing, from
 exactly which profile file.
 """
@@ -115,9 +117,11 @@ class Profile:
         return {} if self.target_yaml is _UNSET else {"target_yaml": self.target_yaml}
 
 
-def load_profile(profile_path: str) -> Profile:
-    """Parse and validate one profile YAML. Raises ProfileError naming the
-    exact missing/invalid field - never fills one in silently."""
+def load_profile(profile_path: str, repo_root: str) -> Profile:
+    """Parse and validate one profile YAML against the checkout at `repo_root`
+    (a relative path resolves against the working directory). Raises
+    ProfileError naming the exact missing/invalid field - never fills one in
+    silently."""
     with open(profile_path) as f:
         raw = yaml.safe_load(f) or {}
 
@@ -131,9 +135,12 @@ def load_profile(profile_path: str) -> Profile:
 
     profile_dir = os.path.dirname(os.path.abspath(profile_path))
 
-    repo_root = require("repo_root")
-    if not os.path.isabs(repo_root):
-        repo_root = os.path.normpath(os.path.join(profile_dir, repo_root))
+    if "repo_root" in raw:
+        raise ProfileError(
+            f"profile {profile_path!r} has a 'repo_root' field; the checkout is supplied "
+            "by the caller, not the profile - remove it"
+        )
+    repo_root = os.path.abspath(repo_root)
 
     build = require("build")
     if not isinstance(build, dict):

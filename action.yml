@@ -14,9 +14,15 @@ inputs:
   profile:
     description: >-
       Path, relative to the repository root, to a profile YAML describing
-      what to analyse (see entropytrace/cli.py's run_profile docstring for
-      the exact shape).
+      how to analyse the project (see entropytrace/cli.py's run_profile
+      docstring for the exact shape). It never says where the checkout is.
     required: true
+  repo-root:
+    description: >-
+      Path, relative to the repository root, to the checkout the profile is
+      applied to. Defaults to the repository root itself.
+    required: false
+    default: '.'
   mode:
     description: "Policy mode: 'pr' (default, UNKNOWN warns) or 'audit' (UNKNOWN fails)."
     required: false
@@ -41,3 +47,4 @@ runs:
     - ${{ inputs.profile }}
     - ${{ inputs.mode }}
     - ${{ inputs.output }}
+    - ${{ inputs.repo-root }}

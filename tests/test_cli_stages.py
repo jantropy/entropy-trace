@@ -7,9 +7,12 @@ CASE = os.path.join(
 )
 
 
+ROOT = os.path.dirname(CASE)  # the case's checkout is the directory its profile sits in
+
+
 def test_run_profile_reports_each_stage_in_order_with_facts():
     seen = []
-    run_profile(CASE, progress=lambda stage, phase, **facts: seen.append((stage, phase, facts)))
+    run_profile(CASE, ROOT, progress=lambda stage, phase, **facts: seen.append((stage, phase, facts)))
     assert [(s, p) for s, p, _ in seen] == [
         ("build_set", "start"), ("build_set", "done"),
         ("preprocess", "start"), ("preprocess", "done"),
@@ -24,16 +27,16 @@ def test_run_profile_reports_each_stage_in_order_with_facts():
 
 
 def test_run_profile_without_progress_is_unchanged():
-    assert run_profile(CASE)["policy"]["overall_verdict"] == "FAIL"
+    assert run_profile(CASE, ROOT)["policy"]["overall_verdict"] == "FAIL"
 
 
 def test_report_stages_prints_to_stderr_only_when_asked(tmp_path, capsys):
     out = str(tmp_path / "result.json")
-    main(["--profile", CASE, "--output", out, "--report-stages"])
+    main(["--profile", CASE, "--repo-root", ROOT, "--output", out, "--report-stages"])
     captured = capsys.readouterr()
     assert "entropy-trace: stage=build_set phase=start" in captured.err
     assert "entropy-trace: stage=chain_walk phase=done closed=1 unknown=0" in captured.err
     assert "stage=" not in captured.out
 
-    main(["--profile", CASE, "--output", out])
+    main(["--profile", CASE, "--repo-root", ROOT, "--output", out])
     assert "stage=" not in capsys.readouterr().err

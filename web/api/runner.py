@@ -5,8 +5,8 @@ derived profile, runs `python -m entropytrace.cli` on it in a subprocess with a
 hard timeout, and classifies how it ended (failure.py).
 
 Parameterisation, not generation: the derived profile differs from the
-project's base profile only in where the checkout is, which commit it is and
-what to call it. The build backend, `build.dir`, toolchain, sinks and sources
+project's base profile only in which commit it is and what to call it; the
+checkout is passed to the CLI alongside it, never written into the profile. The build backend, `build.dir`, toolchain, sinks and sources
 are the base profile's own; a ref only changes which source tree they apply to.
 """
 
@@ -165,15 +165,14 @@ def get_clone_ready(project: Project) -> bool:
 # --- profile derivation ----------------------------------------------------
 
 
-def derive_profile(project: Project, worktree: str, sha: str, label: str) -> dict:
-    """The base profile with the checkout, commit and label replaced, and
+def derive_profile(project: Project, sha: str, label: str) -> dict:
+    """The base profile with the commit and label replaced, and
     relative catalogue paths made absolute so the file can live in the run's
     own directory. Nothing about how to analyse the project changes."""
     with open(project.profile) as f:
         raw = yaml.safe_load(f)
     derived = copy.deepcopy(raw)
     base_dir = os.path.dirname(project.profile)
-    derived["repo_root"] = worktree
     derived["commit"] = sha
     derived["label"] = label
     for field in ("sources_yaml", "sinks_yaml", "stub_dir"):
@@ -219,7 +218,7 @@ def sink_evidence(profile_path: str, worktree: str) -> str:
     from entropytrace.profiles import load_catalogue_for_profile, load_profile
 
     facts = []
-    for entry in load_catalogue_for_profile(load_profile(profile_path)):
+    for entry in load_catalogue_for_profile(load_profile(profile_path, worktree)):
         path = os.path.join(worktree, entry["file"])
         symbol = entry["entry_symbol"]
         if not os.path.isfile(path):
@@ -273,7 +272,7 @@ def _execute(job: Job, project: Project) -> None:
 
         if prepare_error is None:
             os.makedirs(run_dir, exist_ok=True)
-            profile = derive_profile(project, worktree, job.sha, _label_for(project, job.ref, job.sha, job.verified_label))
+            profile = derive_profile(project, job.sha, _label_for(project, job.ref, job.sha, job.verified_label))
             profile_path = os.path.join(run_dir, "profile.yaml")
             with open(profile_path, "w") as f:
                 yaml.safe_dump(profile, f, sort_keys=False)
@@ -298,7 +297,7 @@ def _execute(job: Job, project: Project) -> None:
 
             argv = [
                 sys.executable, "-m", "entropytrace.cli",
-                "--profile", profile_path, "--output", out_path, "--mode", "pr", "--report-stages",
+                "--profile", profile_path, "--repo-root", worktree, "--output", out_path, "--mode", "pr", "--report-stages",
             ]
             lock = repo_cache._lock(f"run:{worktree}")
             with lock, _slots:

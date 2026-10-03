@@ -18,6 +18,10 @@ on:
         description: 'Profile YAML to analyse (relative to repo root)'
         required: true
         default: corpus/synthetic/case1_csprng_swap/vulnerable/ci-profile.yaml
+      repo-root:
+        description: 'Checkout the profile is applied to (relative to repo root)'
+        required: true
+        default: corpus/synthetic/case1_csprng_swap/vulnerable
 
 permissions:
   contents: read
@@ -38,6 +42,7 @@ jobs:
         uses: ./
         with:
           profile: ${{ inputs.profile }}
+          repo-root: ${{ inputs.repo-root }}
           mode: audit
           output: entropy-trace-findings.json
 

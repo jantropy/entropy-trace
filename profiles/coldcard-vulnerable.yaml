@@ -3,7 +3,6 @@
 # The catalogue sink (generate_seed) isn't redeclared here - it's already
 # in data/sinks.yaml, which sinks_yaml defaults to, and profiles.py's
 # load_catalogue_for_profile picks it up automatically.
-repo_root: /Users/satadel/scratch-entropy/coldcard-vuln
 label: "vulnerable (tag 2026-07-01T1730-v5.5.1)"
 commit: "ae88593552403303a1973f1a927095b62cc059af"
 repo: "Coldcard/firmware"
@@ -14,7 +13,7 @@ build:
   backend: make
 
 # The real toolchain Coldcard's own build uses - resolved relative to
-# this project's own root, not repo_root.
+# this project's own root, not the checkout.
 target_yaml: data/targets/arm-none-eabi-cortex-m4-gcc11.yaml
 
 # Finds s_hdnode_from_master via the "Bitcoin seed" structural anchor -

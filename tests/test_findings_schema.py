@@ -22,6 +22,21 @@ def test_patched_fixture_matches_schema():
     jsonschema.validate(_load("findings-patched.json"), schema)
 
 
+def _cached_libsodium():
+    """libsodium's worktree from the runner's cache if one is already there,
+    else None. Never fetches: this test stays fast and offline, and only
+    checks that the paths resolve when a checkout happens to exist."""
+    import projects
+    import repo_cache
+
+    project = projects.load_projects()["libsodium"]
+    if not os.path.isdir(repo_cache.repo_dir(project.key)):
+        return None
+    sha = repo_cache.resolve_ref(project, "1.0.20-RELEASE")
+    path = repo_cache.worktree_dir(project.key, sha) if sha else None
+    return path if path and os.path.isdir(path) else None
+
+
 def test_libsodium_fixture_matches_schema_and_paths_are_repo_root_relative():
     """libsodium is the one committed fixture whose profile uses
     build.dir -- its paths must be repo-root-relative like every other
@@ -32,14 +47,12 @@ def test_libsodium_fixture_matches_schema_and_paths_are_repo_root_relative():
     findings = _load("findings-libsodium.json")
     jsonschema.validate(findings, schema)
 
-    repo_root = os.path.join(
-        os.path.expanduser("~"), "scratch-entropy", "libsodium-1.0.20"
-    )
+    repo_root = _cached_libsodium()
     paths = [findings["sink"]["file"]] + [h["file"] for h in findings["chain"] if h["file"]]
     assert paths, "expected at least one path-bearing field to check"
     for path in paths:
         assert path.startswith("src/libsodium/"), path
-        if os.path.isdir(repo_root):
+        if repo_root:
             assert os.path.isfile(os.path.join(repo_root, path)), path
 
 

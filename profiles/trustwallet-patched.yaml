@@ -1,6 +1,5 @@
 # Trust Wallet Core's patched tag (3.1.1), as a profile. Same shape as
-# trustwallet-vulnerable.yaml - only repo_root/label/commit differ.
-repo_root: /Users/satadel/scratch-entropy/twc-patched
+# trustwallet-vulnerable.yaml - only label/commit differ.
 label: "patched (tag 3.1.1)"
 commit: "d3c2eee16b154cbb69e8959b01e5e71fbabb1212"
 repo: "trustwallet/wallet-core"

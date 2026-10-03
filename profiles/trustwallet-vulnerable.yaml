@@ -3,7 +3,6 @@
 # build with a compile_commands.json already exported, no board symlinks,
 # no build-generated-header stubs, nothing project-specific to prepare
 # first.
-repo_root: /Users/satadel/scratch-entropy/twc-vuln
 label: "vulnerable (tag 3.1.0)"
 commit: "efca5eeef5ab79df88914c7be2c287317cd10234"
 repo: "trustwallet/wallet-core"

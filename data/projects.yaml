@@ -8,7 +8,8 @@
 # below and is ours; a ref only chooses which source tree it is applied to.
 #
 #   url          exact GitHub URL (https://github.com/<owner>/<repo>)
-#   profile      base profile; the runner replaces repo_root, commit and label
+#   profile      base profile; the runner replaces commit and label, and passes
+#                the checkout it made (profiles never name a checkout)
 #   submodules   submodules the build needs, checked out at the SHA the ref's
 #                own tree pins (not `git submodule update`)
 #   prepare      argv lists run once per checkout before the pipeline (a

@@ -9,8 +9,10 @@ is a function of a real run.
 Each report opens straight off disk, with no CDN, external font or script;
 tests/test_static_reports.py checks that on every committed file.
 
-The profiles point at checkouts under `repo_root`, so run this on a machine that
-has them:
+A profile does not say where its checkout is. The checkouts come from the same
+cache the web runner uses (~/.cache/entropy-trace, `ENTROPY_TRACE_CACHE_DIR` to
+move it), fetched on first use, so this needs network access the first time and
+the tools the allowlist's configure steps use (cmake for Trust Wallet Core):
 
     python docs/generate_reports.py
 """
@@ -24,18 +26,33 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.normpath(os.path.join(HERE, ".."))
 sys.path.insert(0, PROJECT_ROOT)
 
+sys.path.insert(0, os.path.join(PROJECT_ROOT, "web", "api"))
+
+import projects as projects_mod  # noqa: E402
+import repo_cache  # noqa: E402
+from proc import CommandTimeout  # noqa: E402
 from entropytrace.cli import run_profile  # noqa: E402
 from entropytrace.emit.report import base_css, build_report_html, font_face_css, logo_html  # noqa: E402
 
 # `scons` (Trezor's build) is installed next to this interpreter in the venv.
 os.environ["PATH"] = os.path.dirname(sys.executable) + os.pathsep + os.environ.get("PATH", "")
 
+# Which allowlisted project and ref each profile is a report of.
+_CHECKOUT_OF = {
+    "coldcard-vulnerable": ("coldcard", "2026-07-01T1730-v5.5.1"),
+    "coldcard-patched": ("coldcard", "ca72463709f4e3f8964952039d5caf955f566a87"),
+    "trustwallet-vulnerable": ("trustwallet", "3.1.0"),
+    "trustwallet-patched": ("trustwallet", "3.1.1"),
+    "libsodium": ("libsodium", "1.0.20-RELEASE"),
+}
+
 PROFILES_DIR = os.path.join(PROJECT_ROOT, "profiles")
 REPORTS_DIR = os.path.join(HERE, "reports")
 
 
-def _one(stem: str) -> tuple[str, dict]:
-    findings = run_profile(os.path.join(PROFILES_DIR, f"{stem}.yaml"), mode="pr")
+def _one(job: tuple[str, str]) -> tuple[str, dict]:
+    stem, checkout = job
+    findings = run_profile(os.path.join(PROFILES_DIR, f"{stem}.yaml"), checkout, mode="pr")
     with open(os.path.join(REPORTS_DIR, f"{stem}.html"), "w") as f:
         f.write(build_report_html(findings))
     return stem, findings
@@ -86,10 +103,24 @@ td a:hover { text-decoration-color: var(--tomato); }
 
 def main() -> int:
     stems = sorted(os.path.splitext(n)[0] for n in os.listdir(PROFILES_DIR) if n.endswith(".yaml"))
+    unknown = [s for s in stems if s not in _CHECKOUT_OF]
+    if unknown:
+        print(f"cannot generate reports: no project and ref listed for profile(s) {unknown}", file=sys.stderr)
+        return 1
+    allowlist = projects_mod.load_projects()
+    try:
+        jobs = []
+        for stem in stems:
+            key, ref = _CHECKOUT_OF[stem]
+            print(f"checkout for {stem} ({key} @ {ref[:12]})", flush=True)
+            jobs.append((stem, repo_cache.checkout(allowlist[key], ref)))
+    except (repo_cache.CacheError, CommandTimeout) as exc:
+        print(f"cannot generate reports: {exc}", file=sys.stderr)
+        return 1
     os.makedirs(REPORTS_DIR, exist_ok=True)
     results: dict[str, dict] = {}
     with concurrent.futures.ProcessPoolExecutor(max_workers=3) as pool:
-        for stem, findings in pool.map(_one, stems):
+        for stem, findings in pool.map(_one, jobs):
             results[stem] = findings
             print(f"{stem}: {findings['policy']['overall_verdict']}", flush=True)
     with open(os.path.join(REPORTS_DIR, "index.html"), "w") as f:
