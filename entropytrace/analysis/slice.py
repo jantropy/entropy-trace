@@ -654,10 +654,9 @@ def slice_from_sink(
             sink, sink.entry_symbol, [], "UNKNOWN",
             unknown_reason=(
                 f"{sink.entry_symbol!r} is a formal parameter of {sink.name!r}, "
-                "not a callable entry point -- tracing what flows into it requires "
+                "not a callable entry point - tracing what flows into it requires "
                 "backward interprocedural argument tracing across this function's "
-                "call sites, which slice.py does not implement (see this "
-                "function's docstring)"
+                "call sites which is not yet implemented"
             ),
         )
     if sink.language == "c":
