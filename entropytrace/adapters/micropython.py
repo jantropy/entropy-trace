@@ -126,6 +126,9 @@ class FFIEdge:
     # e.g. ["mp_module_ngu", "mp_module_random", "random_bytes_obj", "random_bytes"].
     hops: list[str] = dataclasses.field(default_factory=list)
     reason: str | None = None
+    # How the dotted root got here when an import alias was followed, e.g.
+    # "`random` is imported from trezor.crypto at ..., which re-exports it ...".
+    via: str = ""
 
 
 def find_module_registrations(build_set: list[TranslationUnit]) -> dict[str, str]:

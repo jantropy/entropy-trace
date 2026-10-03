@@ -601,3 +601,155 @@ def test_slice_from_sink_mix_primary_is_first_classified_contribution(tmp_path, 
     assert [c.status for c in result.contributions] == ["UNKNOWN", "UNKNOWN", "CLASSIFIED"]
     assert result.status == "CLASSIFIED"
     assert result.classification.category == SourceClass.USER_ENTROPY
+
+
+# --- Import-alias resolution: which local names are rewritten, and where it stops.
+
+
+def _alias(tmp_path, source: str, root: str, extra: dict | None = None, func="reset_device"):
+    """Write `source` as src/app.py (plus any `extra` files), and resolve
+    `root` the way a dotted call's first segment is."""
+    repo = str(tmp_path)
+    _write(os.path.join(repo, "src/app.py"), source)
+    for rel, content in (extra or {}).items():
+        _write(os.path.join(repo, rel), content)
+    node = _find_python_function(repo, "src/app.py", func)
+    return repo, node, _resolve_import_alias(repo, "src/app.py", node, root)
+
+
+def test_a_plain_import_resolves_to_itself(tmp_path):
+    _, _, path = _alias(tmp_path, "def reset_device():\n    import trezorcrypto\n    trezorcrypto.random.bytes(32)\n", "trezorcrypto")
+    assert path == "trezorcrypto"
+
+
+def test_an_aliased_import_resolves_to_the_real_module(tmp_path):
+    _, _, path = _alias(tmp_path, "def reset_device():\n    import trezorcrypto as tc\n    tc.random.bytes(32)\n", "tc")
+    assert path == "trezorcrypto"
+
+
+def test_an_aliased_dotted_import_resolves_to_the_whole_dotted_path(tmp_path):
+    _, _, path = _alias(tmp_path, "def reset_device():\n    import trezorcrypto.random as r\n    r.bytes(32)\n", "r")
+    assert path == "trezorcrypto.random"
+
+
+def test_a_from_import_resolves_to_module_dot_name(tmp_path):
+    _, _, path = _alias(tmp_path, "def reset_device():\n    from trezorcrypto import random\n    random.bytes(32)\n", "random")
+    assert path == "trezorcrypto.random"
+
+
+def test_an_aliased_from_import_resolves_to_the_real_name_not_the_local_one(tmp_path):
+    _, _, path = _alias(tmp_path, "def reset_device():\n    from trezorcrypto import random as rng\n    rng.bytes(32)\n", "rng")
+    assert path == "trezorcrypto.random"
+
+
+def test_a_module_level_import_is_found_when_the_function_has_none(tmp_path):
+    _, _, path = _alias(tmp_path, "from trezorcrypto import random\n\ndef reset_device():\n    random.bytes(32)\n", "random")
+    assert path == "trezorcrypto.random"
+
+
+def test_a_name_with_no_matching_import_is_left_alone_and_still_unknown(tmp_path, monkeypatch):
+    repo, node, path = _alias(tmp_path, "def reset_device():\n    random.bytes(32)\n", "random")
+    assert path is None
+    monkeypatch.setattr(
+        slice_mod, "resolve_ffi_path",
+        lambda dotted, build_set, stub_dir: FFIEdge(dotted, "UNKNOWN", reason="no MP_REGISTER_MODULE found for 'random'"),
+    )
+    edge, hops = _resolve_ffi_with_fallbacks("random.bytes", "src/app.py", node, repo, [], str(tmp_path / "stub"))
+    assert edge.status == "UNKNOWN"
+    assert edge.reason == "no MP_REGISTER_MODULE found for 'random'"  # unchanged: nothing was followed
+    assert hops == []
+
+
+def test_conditional_imports_are_not_followed(tmp_path):
+    for body in (
+        "    if DEBUG:\n        from trezorcrypto import random\n",
+        "    try:\n        from trezorcrypto import random\n    except ImportError:\n        random = None\n",
+        "    for _ in range(1):\n        from trezorcrypto import random\n",
+    ):
+        _, _, path = _alias(tmp_path, "DEBUG = True\n\ndef reset_device():\n" + body + "    random.bytes(32)\n", "random")
+        assert path is None, body
+
+
+def test_a_conditional_re_export_in_the_package_init_is_not_followed(tmp_path):
+    """trezor/crypto/__init__.py guards some re-exports with `if utils.X:`;
+    those say nothing certain about what the name is."""
+    _, _, path = _alias(
+        tmp_path,
+        "def reset_device():\n    from trezor.crypto import random\n    random.bytes(32)\n",
+        "random",
+        extra={"src/trezor/crypto/__init__.py": "if utils.USE_THP:\n    from trezorcrypto import random\n"},
+    )
+    assert path == "trezor.crypto.random"  # stops at the package; does not guess past the `if`
+
+
+def test_relative_imports_are_not_resolved(tmp_path):
+    _, _, path = _alias(tmp_path, "def reset_device():\n    from . import random\n    random.bytes(32)\n", "random")
+    assert path is None
+
+
+def test_a_re_export_chain_deeper_than_one_level_stops_with_a_reason_naming_the_hop(tmp_path, monkeypatch):
+    repo, node, _ = _alias(
+        tmp_path,
+        "def reset_device():\n    from pkg.a import thing\n    thing.bytes(32)\n",
+        "thing",
+        extra={
+            "src/pkg/a/__init__.py": "from pkg.b import thing\n",
+            "src/pkg/b/__init__.py": "from realmod import thing\n",
+        },
+    )
+    monkeypatch.setattr(
+        slice_mod, "resolve_ffi_path",
+        lambda dotted, build_set, stub_dir: FFIEdge(dotted, "UNKNOWN", reason=f"no MP_REGISTER_MODULE found for {dotted.split('.')[0]!r}"),
+    )
+    edge, _ = _resolve_ffi_with_fallbacks("thing.bytes", "src/app.py", node, repo, [], str(tmp_path / "stub"))
+    assert edge.status == "UNKNOWN"
+    assert "pkg.b.thing.bytes" in edge.reason  # the path it got to
+    assert "src/pkg/a/__init__.py:1" in edge.reason  # the re-export it followed
+    assert "re-exported again at src/pkg/b/__init__.py:1" in edge.reason  # the one it saw and did not follow
+    assert "one level of re-export" in edge.reason
+
+
+def test_a_circular_re_export_terminates(tmp_path, monkeypatch):
+    repo, node, _ = _alias(
+        tmp_path,
+        "def reset_device():\n    from pkg.a import thing\n    thing.bytes(32)\n",
+        "thing",
+        extra={"src/pkg/a/__init__.py": "from pkg.b import thing\n", "src/pkg/b/__init__.py": "from pkg.a import thing\n"},
+    )
+    monkeypatch.setattr(
+        slice_mod, "resolve_ffi_path",
+        lambda dotted, build_set, stub_dir: FFIEdge(dotted, "UNKNOWN", reason="no MP_REGISTER_MODULE found"),
+    )
+    edge, _ = _resolve_ffi_with_fallbacks("thing.bytes", "src/app.py", node, repo, [], str(tmp_path / "stub"))
+    assert edge.status == "UNKNOWN"
+
+
+def test_an_alias_that_resolves_says_why_in_the_ffi_hop(tmp_path, monkeypatch):
+    """A reader of the chain must be able to see that `random` meant
+    `trezorcrypto.random`, and which statements said so."""
+    repo = str(tmp_path)
+    _write(
+        os.path.join(repo, "src/app.py"),
+        "def reset_device():\n    from trezor.crypto import random\n    int_entropy = random.bytes(32)\n",
+    )
+    _write(os.path.join(repo, "src/trezor/crypto/__init__.py"), "from trezorcrypto import (\n    random,\n)\n")
+    _write(os.path.join(repo, "impl.c"), "int impl(void) { return MAGIC_HW_REGISTER_MARKER; }\n")
+    build_set = [TranslationUnit("impl.c", "impl.c.o", "", False, repo)]
+
+    def fake(dotted, build_set, stub_dir):
+        if dotted == "trezorcrypto.random.bytes":
+            return FFIEdge(dotted, "RESOLVED", c_symbol="impl", tu="impl.c")
+        return FFIEdge(dotted, "UNKNOWN", reason=f"no MP_REGISTER_MODULE found for {dotted.split('.')[0]!r}")
+
+    monkeypatch.setattr(slice_mod, "resolve_ffi_path", fake)
+    sink = Sink(
+        name="reset_device", category=SinkCategory.SEED_GENERATION, entropy_critical=True,
+        language="python", file="src/app.py", line=1, entry_symbol="reset_device",
+    )
+    idx = build_symbol_index(build_set, str(tmp_path / "stub"))
+    result = slice_from_sink(sink, repo, build_set, idx, REGISTRY, str(tmp_path / "stub"))
+    assert result.status == "CLASSIFIED"
+    ffi = next(h for h in result.hops if h.kind == "ffi")
+    assert "resolved via 'trezorcrypto.random.bytes'" in ffi.detail
+    assert "`random` is imported from trezor.crypto at src/app.py:2" in ffi.detail
+    assert "re-exports it from trezorcrypto at src/trezor/crypto/__init__.py:2" in ffi.detail

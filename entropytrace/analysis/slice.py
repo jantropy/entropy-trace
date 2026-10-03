@@ -218,22 +218,32 @@ def _module_ast(repo_root: str, rel_file: str):
     return ast.parse(source, filename=rel_file)
 
 
-def _import_from_binding(search_node, local_name: str) -> tuple[str, str] | None:
-    """Search `search_node` (a function body or a whole module) for an
-    ast.ImportFrom that binds `local_name` - e.g. `from trezor.crypto
-    import random` binds "random" to ("trezor.crypto", "random");
-    `from trezorcrypto import random as rng` binds "rng" to
-    ("trezorcrypto", "random"). A plain ast.walk finds a function-scoped
-    import exactly like a module-level one - MicroPython's own convention
-    leans heavily on function-scoped imports for RAM conservation. Returns
-    None if `local_name` is never bound by any ImportFrom in this subtree
-    - a bare `import X` is a different shape (see
-    `_locate_python_sibling_module`)."""
-    for node in ast.walk(search_node):
-        if isinstance(node, ast.ImportFrom) and node.module:
+@dataclasses.dataclass(frozen=True)
+class _Binding:
+    module: str  # `from M import n` -> M; `import M [as x]` -> M
+    name: str | None  # the imported name, or None for a plain `import`
+    file: str
+    line: int
+
+
+def _unconditional_binding(owner, local_name: str, rel_file: str) -> "_Binding | None":
+    """The import that binds `local_name`, looking only at statements directly
+    in the function or module body. An import under an `if`, `try`, loop or
+    `with` is conditional: which branch runs can't be known without executing
+    the code, so it is not followed. Relative imports are skipped for the same
+    reason a project-wide symbol table is out of scope."""
+    for node in owner.body:
+        if isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
             for alias in node.names:
                 if (alias.asname or alias.name) == local_name:
-                    return (node.module, alias.name)
+                    return _Binding(node.module, alias.name, rel_file, getattr(alias, "lineno", node.lineno))
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.asname:
+                    if alias.asname == local_name:
+                        return _Binding(alias.name, None, rel_file, getattr(alias, "lineno", node.lineno))
+                elif alias.name.split(".")[0] == local_name:
+                    return _Binding(local_name, None, rel_file, getattr(alias, "lineno", node.lineno))
     return None
 
 
@@ -257,38 +267,57 @@ def _locate_package_init(repo_root: str, from_file: str, dotted_module: str) -> 
         current = parent
 
 
-def _resolve_import_alias(repo_root: str, rel_file: str, func_node, root: str) -> str | None:
-    """The cheapest of the two FFI-binder gaps this handles: an import-
-    aliased re-export, e.g. `from trezor.crypto import random` then
-    `random.bytes(...)`, where `random` is really `trezorcrypto`'s own
-    registered module, two import hops away. Checks the enclosing
-    function's own (usually function-scoped) imports first, then the
-    whole module's, for a binding of `root`; if found, follows exactly
-    one further level through the imported module's own __init__.py, in
-    case it's itself a re-export (trezor/crypto/__init__.py's own `from
-    trezorcrypto import random`) - no more than one level. Returns a real
-    dotted root to retry FFI resolution with (e.g. "trezorcrypto.random"),
-    or None if `root` isn't bound by any ImportFrom reachable from this
-    file at all."""
-    binding = _import_from_binding(func_node, root)
+@dataclasses.dataclass(frozen=True)
+class AliasTrail:
+    path: str  # the real dotted root, e.g. "trezorcrypto.random"
+    explanation: str  # how the local name got there, shown in the chain
+    beyond_bound: str | None  # a further re-export that was seen but not followed
+
+
+def _reexport_binding(repo_root: str, from_file: str, module_name: str, real_name: str) -> "_Binding | None":
+    """Where `module_name`'s own __init__.py gets `real_name` from, if it
+    re-exports it with a plain `from X import name`."""
+    init_rel = _locate_package_init(repo_root, from_file, module_name)
+    if init_rel is None:
+        return None
+    tree = _module_ast(repo_root, init_rel)
+    if tree is None:
+        return None
+    binding = _unconditional_binding(tree, real_name, init_rel)
+    return binding if binding is not None and binding.name is not None else None
+
+
+def _explain_import_alias(repo_root: str, rel_file: str, func_node, root: str) -> "AliasTrail | None":
+    """What a dotted call's root name really is, read from this file's own
+    imports: the enclosing function's first, then the module's. `from
+    trezor.crypto import random` makes `random` trezor.crypto.random, and
+    exactly one level of re-export is then followed through that package's
+    __init__.py (trezor/crypto/__init__.py re-exports it from trezorcrypto). A
+    second re-export is noticed and reported, not followed. None if `root` is
+    not bound by an unconditional import."""
+    binding = _unconditional_binding(func_node, root, rel_file)
     if binding is None:
         module_tree = _module_ast(repo_root, rel_file)
-        if module_tree is None:
-            return None
-        binding = _import_from_binding(module_tree, root)
+        binding = _unconditional_binding(module_tree, root, rel_file) if module_tree is not None else None
     if binding is None:
         return None
-    module_name, real_name = binding
+    if binding.name is None:
+        return AliasTrail(binding.module, f"`{root}` names module {binding.module} (imported at {binding.file}:{binding.line})", None)
 
-    init_rel = _locate_package_init(repo_root, rel_file, module_name)
-    if init_rel is not None:
-        init_tree = _module_ast(repo_root, init_rel)
-        if init_tree is not None:
-            inner = _import_from_binding(init_tree, real_name)
-            if inner is not None:
-                inner_module, inner_name = inner
-                return f"{inner_module}.{inner_name}"
-    return f"{module_name}.{real_name}"
+    path = f"{binding.module}.{binding.name}"
+    explanation = f"`{root}` is imported from {binding.module} at {binding.file}:{binding.line}"
+    inner = _reexport_binding(repo_root, rel_file, binding.module, binding.name)
+    if inner is None:
+        return AliasTrail(path, explanation, None)
+    explanation += f", which re-exports it from {inner.module} at {inner.file}:{inner.line}"
+    deeper = _reexport_binding(repo_root, inner.file, inner.module, inner.name)
+    beyond = None if deeper is None else f"{inner.module}.{inner.name} is re-exported again at {deeper.file}:{deeper.line}"
+    return AliasTrail(f"{inner.module}.{inner.name}", explanation, beyond)
+
+
+def _resolve_import_alias(repo_root: str, rel_file: str, func_node, root: str) -> str | None:
+    trail = _explain_import_alias(repo_root, rel_file, func_node, root)
+    return trail.path if trail is not None else None
 
 
 def _locate_python_sibling_module(repo_root: str, from_file: str, module_name: str) -> str | None:
@@ -342,12 +371,16 @@ def _resolve_ffi_with_fallbacks(
 
     root, _, rest = dotted.partition(".")
 
-    real_root = _resolve_import_alias(repo_root, rel_file, func_node, root)
-    if real_root is not None:
-        aliased_path = f"{real_root}.{rest}" if rest else real_root
+    alias_note = None
+    trail = _explain_import_alias(repo_root, rel_file, func_node, root)
+    if trail is not None and trail.path != root:
+        aliased_path = f"{trail.path}.{rest}" if rest else trail.path
         aliased_edge = resolve_ffi_path(aliased_path, build_set, stub_dir)
         if aliased_edge.status == "RESOLVED":
-            return aliased_edge, []
+            return dataclasses.replace(aliased_edge, via=trail.explanation), []
+        alias_note = f"{trail.explanation}, so the path is {aliased_path!r}, but that did not resolve: {aliased_edge.reason}"
+        if trail.beyond_bound:
+            alias_note += f". {trail.beyond_bound}, past the one level of re-export this resolver follows"
 
     if depth < max_depth and rest:
         wrapper_rel = _locate_python_sibling_module(repo_root, rel_file, root)
@@ -371,6 +404,8 @@ def _resolve_ffi_with_fallbacks(
                         )
                         return inner_edge, [detour_hop] + inner_hops
 
+    if alias_note is not None:
+        edge = dataclasses.replace(edge, reason=f"{edge.reason}; {alias_note}")
     return edge, []
 
 
@@ -752,7 +787,9 @@ def slice_from_sink(
         if edge.status == "RESOLVED":
             hops.extend(extra_hops)
             detail = f"-> {edge.c_symbol}"
-            if edge.py_path != dotted:
+            if edge.via:
+                detail = f"-> {edge.c_symbol} (resolved via {edge.py_path!r}: {edge.via})"
+            elif edge.py_path != dotted:
                 detail = f"-> {edge.c_symbol} (resolved via {edge.py_path!r})"
             hops.append(Hop("ffi", dotted, sink.file, lineno, detail=detail))
             # The FFI resolver already pinpointed the TU that defines
@@ -820,7 +857,9 @@ def _walk_one_python_source(
             unknown_reason=f"{dotted!r} did not resolve over FFI: {edge.reason}",
         )
     detail = f"-> {edge.c_symbol}"
-    if edge.py_path != dotted:
+    if edge.via:
+        detail = f"-> {edge.c_symbol} (resolved via {edge.py_path!r}: {edge.via})"
+    elif edge.py_path != dotted:
         detail = f"-> {edge.c_symbol} (resolved via {edge.py_path!r})"
     hops = hops + extra_hops + [Hop("ffi", dotted, sink.file, lineno, detail=detail)]
     text_cache: dict = {}
