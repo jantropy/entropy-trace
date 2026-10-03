@@ -71,6 +71,12 @@ and a ref only picks the source tree it is applied to.
   its exact GitHub URL, its profile and its verified refs (refs that were
   actually run). Anything else is rejected before any work happens. The browser
   sends a project key and a ref, never a path, URL or profile.
+- **Several builds.** Some answers depend on which build you mean. Trezor is
+  traced as the desktop emulator, the device firmware and the device kernel,
+  each with its own profile, listed as `builds:` in the allowlist. The UI starts
+  all of them for one ref and shows the three results side by side; the server
+  runs them one after another on the shared checkout. A run for such a project
+  has to name its build, and the API never picks one for you.
 - **Verified and unverified refs.** Any other branch, tag or commit in the same
   repository can be run too. It is marked unverified, has to resolve in that
   repository, and may fail.
@@ -103,12 +109,12 @@ interpreter: `make install` then `make dev` does that.
   `schema_version`/`coverage`; rejected otherwise) and save it into the
   same directory
 - `GET /api/health` -- liveness + which directory is being served
-- `GET /api/projects` -- the allowlist: key, name, URL, verified refs, cache state
+- `GET /api/projects` -- the allowlist: key, name, URL, verified refs, builds, cache state
 - `POST /api/resolve` `{url}` -- match a pasted GitHub URL to an allowlisted
   project and, if the URL names one, a ref (400 not a supported URL or repository,
   422 the named ref does not exist, 503 still cloning); starts nothing
-- `POST /api/runs` `{project, ref}` -- start a run (400 not allowlisted or a
-  malformed ref, 422 ref not in that repository, 503 still cloning); returns an id
+- `POST /api/runs` `{project, ref, build?}` -- start a run (400 not allowlisted, a
+  malformed ref, or a build missing/unknown/not applicable for that project, 422 ref not in that repository, 503 still cloning); returns an id
 - `GET /api/runs/{id}?since=N` -- status, stage, outcome and the log lines from N
   on (polled once a second, not streamed)
 - `GET /api/runs/{id}/findings` -- the result, once the run has succeeded

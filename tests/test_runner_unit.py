@@ -16,8 +16,10 @@ from projects import (  # noqa: E402
     AllowlistError,
     InvalidRef,
     InvalidUrl,
+    UnknownBuild,
     UnknownProject,
     find_project_by_url,
+    get_build,
     get_project,
     load_projects,
     parse_repo_url,
@@ -257,3 +259,90 @@ def test_a_url_matches_the_allowlist_case_insensitively_and_nothing_else():
     for outside in ("https://github.com/evil/repo", "https://github.com/Coldcard/micropython", "https://github.com/Coldcard/firmware-fork"):
         with pytest.raises(UnknownProject):
             find_project_by_url(projects, parse_repo_url(outside))
+
+
+# --- projects with several builds ------------------------------------------
+
+
+def _builds_allowlist(builds: str, extra: str = "") -> str:
+    return f"""
+projects:
+  demo:
+    name: Demo
+    url: https://github.com/example/demo
+{extra}    builds:
+{builds}
+    refs:
+      - {{ref: v1.0, label: "v1", source: corpus/coldcard.yaml}}
+"""
+
+
+TWO_BUILDS = """      one: {label: "One", summary: "first", profile: profiles/coldcard-vulnerable.yaml}
+      two: {label: "Two", profile: profiles/coldcard-patched.yaml}"""
+
+
+def test_a_project_can_offer_several_builds_each_with_its_own_profile(tmp_path):
+    project = load_projects(_write_allowlist(tmp_path, _builds_allowlist(TWO_BUILDS)))["demo"]
+    assert [b.key for b in project.builds] == ["one", "two"]
+    assert project.builds[0].summary == "first" and project.builds[1].summary == ""
+    assert all(os.path.isfile(b.profile) for b in project.builds)
+    assert project.profile == project.builds[0].profile
+
+
+def test_the_committed_trezor_entry_offers_emulator_firmware_and_kernel():
+    trezor = load_projects()["trezor"]
+    assert [b.key for b in trezor.builds] == ["emulator", "firmware", "kernel"]
+    assert [os.path.basename(b.profile) for b in trezor.builds] == [
+        "trezor.yaml", "trezor-firmware.yaml", "trezor-kernel.yaml"
+    ]
+    assert [r.ref for r in trezor.refs] == ["core/v2.9.2"]
+    assert all(b.summary for b in trezor.builds)
+
+
+@pytest.mark.parametrize(
+    "body, why",
+    [
+        # both a profile and builds
+        (_builds_allowlist(TWO_BUILDS, extra="    profile: profiles/coldcard-vulnerable.yaml\n"), "exactly one"),
+        # a single build is just a profile
+        (_builds_allowlist('      one: {label: "One", profile: profiles/coldcard-vulnerable.yaml}'), "at least two"),
+        (_builds_allowlist('      one: {profile: profiles/coldcard-vulnerable.yaml}\n      two: {label: "Two", profile: profiles/coldcard-patched.yaml}'), "missing 'label'"),
+        (_builds_allowlist('      one: {label: "One"}\n      two: {label: "Two", profile: profiles/coldcard-patched.yaml}'), "missing 'profile'"),
+        (_builds_allowlist('      one: {label: "One", profile: profiles/nope.yaml}\n      two: {label: "Two", profile: profiles/coldcard-patched.yaml}'), "does not exist"),
+        (_builds_allowlist('      one: {label: "One", profile: /etc/passwd}\n      two: {label: "Two", profile: profiles/coldcard-patched.yaml}'), "repo-relative"),
+        (_builds_allowlist('      One: {label: "One", profile: profiles/coldcard-vulnerable.yaml}\n      two: {label: "Two", profile: profiles/coldcard-patched.yaml}'), "lowercase"),
+    ],
+)
+def test_a_malformed_builds_section_is_refused_at_load_time(tmp_path, body, why):
+    with pytest.raises(AllowlistError, match=why):
+        load_projects(_write_allowlist(tmp_path, body))
+
+
+def test_a_build_is_named_for_a_several_build_project_and_never_for_a_single_one(tmp_path):
+    several = load_projects(_write_allowlist(tmp_path, _builds_allowlist(TWO_BUILDS)))["demo"]
+    assert get_build(several, "two").label == "Two"
+    for bad in (None, "three", "", "../one", 7):
+        with pytest.raises(UnknownBuild):
+            get_build(several, bad)
+    single = load_projects(_write_allowlist(tmp_path, GOOD))["demo"]
+    assert get_build(single, None) is None
+    with pytest.raises(UnknownBuild):
+        get_build(single, "one")
+
+
+def test_the_derived_profile_comes_from_the_build_not_the_projects_default(tmp_path):
+    import yaml
+
+    trezor = load_projects()["trezor"]
+    kernel = next(b for b in trezor.builds if b.key == "kernel")
+    derived = runner.derive_profile(trezor, str(tmp_path), "c" * 40, "x", kernel)
+    assert derived["build"]["scons_args"] == yaml.safe_load(open(kernel.profile))["build"]["scons_args"]
+    assert derived["sinks"][0]["name"] == "rng_fill_buffer_strong"
+    assert runner.derive_profile(trezor, str(tmp_path), "c" * 40, "x")["sinks"][0]["name"] == "reset_device"
+
+
+def test_a_label_says_which_build_so_saved_results_do_not_look_alike():
+    build = projects_mod.Build("kernel", "Device kernel", "", "")
+    assert runner._label_for("core/v2.9.2", "d" * 40, "tag core/v2.9.2", build) == "tag core/v2.9.2 \u00b7 Device kernel"
+    assert runner._label_for("core/v2.9.2", "d" * 40, None, build).endswith(" - unverified \u00b7 Device kernel")
+    assert runner._label_for("core/v2.9.2", "d" * 40, "tag core/v2.9.2", None) == "tag core/v2.9.2"

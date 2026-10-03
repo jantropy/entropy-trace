@@ -2,5 +2,8 @@ fastapi==0.128.8
 uvicorn==0.39.0
 python-multipart==0.0.20
 PyYAML==6.0.3
+# the build backend for projects that build with SCons (Trezor): the runner
+# looks for `scons` next to this interpreter
+SCons==4.11.1
 # test-only, for fastapi.testclient.TestClient (tests/test_web_api.py)
 httpx==0.28.1

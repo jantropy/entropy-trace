@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { getRun, getRunResult, listProjects, resolveUrl, startRun } from './runApi'
-import type { ProjectInfo, ResolvedUrl, RunOutcome, RunSnapshot, Stage } from './runApi'
+import type { BuildInfo, ProjectInfo, ResolvedUrl, RunOutcome, RunSnapshot, Stage } from './runApi'
 import type { Findings } from './types'
 
 const STAGES: { key: Exclude<Stage, 'done'>; label: string }[] = [
@@ -97,7 +97,84 @@ function OutcomeNote({ outcome }: { outcome: RunOutcome }) {
   )
 }
 
-export default function RunPanel({ onResult }: { onResult: (findings: Findings) => void }) {
+// One build of a project that has several. Everything on a card is the
+// server's own: the label and summary come from the allowlist, the verdict and
+// the stopping point from the result itself.
+interface BuildRun {
+  build: BuildInfo | null
+  snapshot: RunSnapshot | null
+  logs: string[]
+  error: string | null
+  findings: Findings | null
+}
+
+const VERDICT_PILL: Record<string, string> = {
+  PASS: 'bg-mint text-bg',
+  WARN: 'bg-amber text-bg',
+  FAIL: 'bg-tomato text-bg',
+}
+
+// What this build's trace ended at, in a few words, for the card.
+function endpoint(f: Findings): string {
+  const c = f.coverage.chains[0]
+  if (!c) return 'no sinks found'
+  const more = f.coverage.chains.length > 1 ? ` (+${f.coverage.chains.length - 1} more sinks)` : ''
+  return (c.status === 'CLASSIFIED' ? c.terminal_category ?? 'classified' : `stopped at ${c.broke_at_hop ?? 'an unresolved hop'}`) + more
+}
+
+function BuildCard({ run, selected, onSelect }: { run: BuildRun; selected: boolean; onSelect: () => void }) {
+  const snap = run.snapshot
+  const verdict = run.findings?.policy.overall_verdict ?? null
+  const failed = snap?.outcome?.kind === 'failed' || !!run.error
+  const status = verdict
+    ? null
+    : failed
+      ? `stopped${snap?.outcome?.stage ? ` at ${STAGE_NAMES[snap.outcome.stage] ?? snap.outcome.stage}` : ''}`
+      : snap?.status === 'queued' || !snap
+        ? 'queued'
+        : (STAGE_NAMES[snap.stage] ?? 'running') + '\u2026'
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-pressed={selected}
+      className={`flex min-w-0 flex-col rounded-xl border p-4 text-left transition-colors ${
+        selected ? 'border-bone bg-surface' : 'border-line bg-surface/50 hover:border-line-strong'
+      }`}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-[15px] font-bold tracking-tight">{run.build?.label}</span>
+        {verdict ? (
+          <span className={`rounded-md px-2 py-0.5 font-mono text-[11px] font-bold tracking-wider ${VERDICT_PILL[verdict]}`}>
+            {verdict}
+          </span>
+        ) : (
+          <span className={`font-mono text-[11px] ${failed ? 'text-dim' : 'animate-pulse text-dim'}`}>{status}</span>
+        )}
+      </div>
+      <div className="mt-2 font-mono text-[11px] text-dim">
+        {run.findings ? (
+          <>
+            {run.findings.coverage.percentage_resolved}% resolved &middot; {endpoint(run.findings)}
+          </>
+        ) : failed ? (
+          (snap?.outcome?.title ?? run.error ?? 'did not finish')
+        ) : (
+          'tracing\u2026'
+        )}
+      </div>
+      {run.build?.summary && <p className="mt-3 text-xs leading-relaxed text-dim">{run.build.summary}</p>}
+    </button>
+  )
+}
+
+export default function RunPanel({
+  onResult,
+  onShow,
+}: {
+  onResult: (findings: Findings) => void
+  onShow: (findings: Findings) => void
+}) {
   const [projects, setProjects] = useState<ProjectInfo[]>([])
   const [verifiedCount, setVerifiedCount] = useState(0)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -110,8 +187,8 @@ export default function RunPanel({ onResult }: { onResult: (findings: Findings) 
   const [running, setRunning] = useState(false)
   const [target, setTarget] = useState<{ name: string; ref: string; verified: boolean } | null>(null)
   const [startError, setStartError] = useState<string | null>(null)
-  const [snapshot, setSnapshot] = useState<RunSnapshot | null>(null)
-  const [logs, setLogs] = useState<string[]>([])
+  const [buildRuns, setBuildRuns] = useState<BuildRun[]>([])
+  const [selected, setSelected] = useState(0)
   const logRef = useRef<HTMLPreElement | null>(null)
   const runToken = useRef(0)
 
@@ -124,63 +201,92 @@ export default function RunPanel({ onResult }: { onResult: (findings: Findings) 
       .catch((e) => setLoadError(String(e.message ?? e)))
   }, [])
 
+  const current = buildRuns[Math.min(selected, buildRuns.length - 1)]
+  const logs = current?.logs
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
   }, [logs])
 
   const clearRun = () => {
-    setSnapshot(null)
-    setLogs([])
+    setBuildRuns([])
+    setSelected(0)
     setStartError(null)
     setTarget(null)
   }
 
-  const run = async (projectKey: string, name: string, ref: string, verified: boolean) => {
-    const token = ++runToken.current
-    setRunning(true)
-    clearRun()
-    setTarget({ name, ref, verified })
+  // One build's run: start it, poll it once a second until it ends, report the
+  // result. Plain polling: the version that cannot half-fail. A few dropped
+  // requests in a row are tolerated; the run carries on server-side whatever
+  // the browser sees.
+  const pollBuild = async (
+    token: number,
+    index: number,
+    projectKey: string,
+    ref: string,
+    build: BuildInfo | null,
+    shown: { current: boolean },
+  ) => {
+    const patch = (fn: (r: BuildRun) => Partial<BuildRun>) => {
+      if (token !== runToken.current) return
+      setBuildRuns((prev) => prev.map((r, i) => (i === index ? { ...r, ...fn(r) } : r)))
+    }
     let id: string
     try {
-      id = (await startRun(projectKey, ref)).id
+      id = (await startRun(projectKey, ref, build?.key)).id
     } catch (e) {
-      setStartError(String((e as Error).message ?? e))
-      setRunning(false)
+      patch(() => ({ error: String((e as Error).message ?? e) }))
       return
     }
     let offset = 0
     let failures = 0
-    // Plain polling, once a second: the version that cannot half-fail. A few
-    // dropped requests in a row are tolerated; the run carries on server-side
-    // whatever the browser sees.
     for (;;) {
       if (token !== runToken.current) return
       try {
         const snap = await getRun(id, offset)
         failures = 0
         offset = snap.log_offset
-        if (snap.logs.length) setLogs((prev) => [...prev, ...snap.logs.map(prettyLine)])
-        setSnapshot(snap)
+        patch((r) => ({ snapshot: snap, logs: snap.logs.length ? [...r.logs, ...snap.logs.map(prettyLine)] : r.logs }))
         if (snap.status === 'succeeded' || snap.status === 'failed') {
           if (snap.status === 'succeeded') {
             try {
-              onResult(await getRunResult(id))
+              const findings = await getRunResult(id)
+              patch(() => ({ findings }))
+              onResult(findings)
+              // Show the first result to arrive; the cards switch between them.
+              if (!shown.current && token === runToken.current) {
+                shown.current = true
+                onShow(findings)
+                setSelected(index)
+              }
             } catch (e) {
-              setStartError(String((e as Error).message ?? e))
+              patch(() => ({ error: String((e as Error).message ?? e) }))
             }
           }
-          break
+          return
         }
       } catch (e) {
         failures += 1
         if (failures >= 5) {
-          setStartError(`lost contact with the server: ${String((e as Error).message ?? e)}`)
-          break
+          patch(() => ({ error: `lost contact with the server: ${String((e as Error).message ?? e)}` }))
+          return
         }
       }
       await new Promise((r) => setTimeout(r, 1000))
     }
-    setRunning(false)
+  }
+
+  // A project with several builds is traced once per build, all started
+  // together; the server runs them one after another on the shared checkout.
+  const run = async (projectKey: string, name: string, ref: string, verified: boolean, builds: BuildInfo[]) => {
+    const token = ++runToken.current
+    setRunning(true)
+    clearRun()
+    setTarget({ name, ref, verified })
+    const list: (BuildInfo | null)[] = builds.length ? builds : [null]
+    setBuildRuns(list.map((build) => ({ build, snapshot: null, logs: [], error: null, findings: null })))
+    const shown = { current: false }
+    await Promise.all(list.map((build, i) => pollBuild(token, i, projectKey, ref, build, shown)))
+    if (token === runToken.current) setRunning(false)
   }
 
   // Resolve what was pasted. A URL that names a ref runs straight away; a bare
@@ -194,7 +300,7 @@ export default function RunPanel({ onResult }: { onResult: (findings: Findings) 
       const r = await resolveUrl(text)
       setResolved(r)
       setOtherRef('')
-      if (r.ref) await run(r.project, r.name, r.ref, !!r.verified)
+      if (r.ref) await run(r.project, r.name, r.ref, !!r.verified, r.builds)
     } catch (e) {
       setStartError(String((e as Error).message ?? e))
     } finally {
@@ -203,6 +309,7 @@ export default function RunPanel({ onResult }: { onResult: (findings: Findings) 
   }
 
   const cacheState = projects.find((p) => p.key === resolved?.project)?.cache
+  const snapshot = current?.snapshot ?? null
   const finished = snapshot?.status === 'succeeded' || snapshot?.status === 'failed'
   const failedStage = snapshot?.outcome?.kind === 'failed' ? snapshot.outcome.stage : null
   const busy = running || resolving
@@ -286,7 +393,7 @@ export default function RunPanel({ onResult }: { onResult: (findings: Findings) 
               <button
                 key={r.ref}
                 className="rounded-lg border border-line bg-bg px-3 py-2 text-left font-mono text-xs hover:border-bone"
-                onClick={() => void run(resolved.project, resolved.name, r.ref, true)}
+                onClick={() => void run(resolved.project, resolved.name, r.ref, true, resolved.builds)}
               >
                 {r.label}
               </button>
@@ -337,7 +444,7 @@ export default function RunPanel({ onResult }: { onResult: (findings: Findings) 
         <div className="mt-4 rounded-xl border border-line-strong bg-surface px-4 py-3 text-sm">{startError}</div>
       )}
 
-      {(snapshot || running) && (
+      {buildRuns.length > 0 && (
         <div className="mt-6 space-y-4">
           {target && (
             <div className="text-[15px]">
@@ -345,12 +452,36 @@ export default function RunPanel({ onResult }: { onResult: (findings: Findings) 
               <span className="font-bold">{target.name}</span> <span className="font-mono text-dim">@ {target.ref}</span>
             </div>
           )}
+          {buildRuns.length > 1 && (
+            <>
+              <p className="max-w-2xl text-sm leading-relaxed text-dim">
+                This project builds more than one way, and the answer depends on which. Each is traced separately; read them
+                side by side. Pick one to see its trace.
+              </p>
+              <div className="grid gap-3 md:grid-cols-3">
+                {buildRuns.map((r, i) => (
+                  <BuildCard
+                    key={r.build?.key ?? i}
+                    run={r}
+                    selected={i === selected}
+                    onSelect={() => {
+                      setSelected(i)
+                      if (r.findings) onShow(r.findings)
+                    }}
+                  />
+                ))}
+              </div>
+            </>
+          )}
+          {current?.error && (
+            <div className="rounded-xl border border-line-strong bg-surface px-4 py-3 text-sm">{current.error}</div>
+          )}
           <StageStrip stage={snapshot?.stage ?? 'prepare'} failedStage={failedStage} finished={!!finished && !failedStage} />
           <pre
             ref={logRef}
             className="h-44 overflow-auto whitespace-pre-wrap rounded-xl border border-line bg-surface p-4 font-mono text-[11px] leading-relaxed text-dim"
           >
-            {logs.length ? logs.join('\n') : 'waiting for the run to start…'}
+            {current?.logs.length ? current.logs.join('\n') : 'waiting for the run to start\u2026'}
           </pre>
           {snapshot?.outcome && <OutcomeNote outcome={snapshot.outcome} />}
         </div>

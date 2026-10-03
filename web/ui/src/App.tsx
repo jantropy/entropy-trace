@@ -472,10 +472,8 @@ export default function App() {
       </header>
 
       <RunPanel
-        onResult={(f) => {
-          setRuns(saveRun(f))
-          show(f, titleFor(f.build_profile.repo, f.label))
-        }}
+        onResult={(f) => setRuns(saveRun(f))}
+        onShow={(f) => show(f, titleFor(f.build_profile.repo, f.label))}
       />
 
       {error && (

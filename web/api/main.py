@@ -30,8 +30,10 @@ from projects import (
     AllowlistError,
     InvalidRef,
     InvalidUrl,
+    UnknownBuild,
     UnknownProject,
     find_project_by_url,
+    get_build,
     get_project,
     load_projects,
     parse_repo_url,
@@ -187,6 +189,10 @@ def _warm_cache() -> None:
     threading.Thread(target=repo_cache.warm, args=(projects, print), daemon=True).start()
 
 
+def _builds_json(project) -> list[dict]:
+    return [{"key": b.key, "label": b.label, "summary": b.summary} for b in project.builds]
+
+
 @app.get("/api/projects")
 def list_projects() -> dict:
     projects = _projects()
@@ -200,6 +206,7 @@ def list_projects() -> dict:
                 "url": p.url,
                 "summary": p.summary,
                 "verified_refs": [{"ref": r.ref, "label": r.label} for r in p.refs],
+                "builds": _builds_json(p),
                 "cache": {"state": status.state, "detail": status.detail},
             }
         )
@@ -228,6 +235,7 @@ def resolve_url(req: ResolveRequest) -> dict:
         "name": project.name,
         "url": project.url,
         "verified_refs": [{"ref": r.ref, "label": r.label} for r in project.refs],
+        "builds": _builds_json(project),
         "ref": None,
         "verified": None,
         "verified_label": None,
@@ -251,6 +259,8 @@ class RunRequest(BaseModel):
 
     project: str = Field(max_length=64)
     ref: str = Field(max_length=200)
+    # Which of the project's builds, for a project that has several.
+    build: str | None = Field(default=None, max_length=40)
 
 
 @app.post("/api/runs", status_code=202)
@@ -261,6 +271,10 @@ def create_run(req: RunRequest) -> dict:
     except UnknownProject as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
+        build = get_build(project, req.build)
+    except UnknownBuild as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
         sha, verified, verified_label = runner.resolve_for_run(project, req.ref)
     except InvalidRef as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -268,7 +282,7 @@ def create_run(req: RunRequest) -> dict:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except runner.NotReady as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    job = runner.start_run(project, req.ref, sha, verified, verified_label)
+    job = runner.start_run(project, req.ref, sha, verified, verified_label, build)
     return {"id": job.id, "verified": verified}
 
 

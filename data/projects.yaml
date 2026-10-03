@@ -9,6 +9,10 @@
 #
 #   url          exact GitHub URL (https://github.com/<owner>/<repo>)
 #   profile      base profile; the runner replaces repo_root, commit and label
+#   builds       instead of `profile`, for a project whose answer depends on which
+#                build you mean: a mapping of key -> {label, summary, profile}.
+#                Each run names one build; the UI runs them all and shows the
+#                results side by side. The same refs and checkout serve them all.
 #   submodules   submodules the build needs, checked out at the SHA the ref's
 #                own tree pins (not `git submodule update`)
 #   prepare      argv lists run once per checkout before the pipeline (a
@@ -94,3 +98,51 @@ projects:
       - ref: 1.0.20-RELEASE
         label: "tag 1.0.20-RELEASE"
         source: corpus/libsodium.yaml
+
+  trezor:
+    name: "Trezor (core, Model T)"
+    url: https://github.com/trezor/trezor-firmware
+    summary: >
+      Python on MicroPython over a C platform layer. Built three ways, because
+      the answer depends on which build you mean: the desktop emulator, the
+      device's firmware half and the device's kernel half. Each is traced on its
+      own.
+    builds:
+      emulator:
+        label: "Unix emulator"
+        profile: profiles/trezor.yaml
+        summary: >
+          The desktop build, compiled to run on a computer. It is not a device,
+          so whatever it reports is about the emulator.
+      firmware:
+        label: "Device firmware"
+        profile: profiles/trezor-firmware.yaml
+        summary: >
+          The unprivileged half of the device: the app code, including
+          reset_device. It runs without direct access to the hardware.
+      kernel:
+        label: "Device kernel"
+        profile: profiles/trezor-kernel.yaml
+        summary: >
+          The privileged half of the device, the code that touches the hardware.
+          Traced from its own RNG function, not from reset_device.
+    # Only the submodules the build set and the RNG chain touch; the others
+    # (libopencm3, CMSIS, nanopb ...) are headers the chain never reads.
+    submodules:
+      - path: vendor/micropython
+        url: https://github.com/trezor/micropython
+        nested:
+          # The STM32 HAL the device builds compile and include; without it a
+          # third of the build set fails to preprocess.
+          - path: lib/stm32lib
+            url: https://github.com/micropython/stm32lib
+      - path: vendor/secp256k1-zkp
+        url: https://github.com/bitcoin-core/secp256k1
+    build_hints:
+      - exists: core/embed/xtask
+        says: "This ref builds with Cargo and core/embed/xtask, not SCons."
+    timeout_seconds: 1500
+    refs:
+      - ref: core/v2.9.2
+        label: "tag core/v2.9.2"
+        source: corpus/trezor.yaml

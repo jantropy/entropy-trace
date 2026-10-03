@@ -11,12 +11,22 @@ export interface VerifiedRef {
   label: string
 }
 
+// One of a project's builds, for a project whose answer depends on which build
+// you mean (Trezor: emulator, device firmware, device kernel). Empty list for a
+// project with a single profile.
+export interface BuildInfo {
+  key: string
+  label: string
+  summary: string
+}
+
 export interface ProjectInfo {
   key: string
   name: string
   url: string
   summary: string
   verified_refs: VerifiedRef[]
+  builds: BuildInfo[]
   cache: { state: 'missing' | 'warming' | 'ready' | 'error'; detail: string }
 }
 
@@ -30,6 +40,7 @@ export interface ResolvedUrl {
   name: string
   url: string
   verified_refs: VerifiedRef[]
+  builds: BuildInfo[]
   // The ref the URL named, or null for a bare repository URL.
   ref: string | null
   verified: boolean | null
@@ -55,6 +66,8 @@ export interface RunSnapshot {
   resolved_sha: string
   verified: boolean
   verified_label: string | null
+  build: string | null
+  build_label: string | null
   status: 'queued' | 'running' | 'succeeded' | 'failed'
   stage: Stage
   outcome: RunOutcome | null
@@ -91,11 +104,11 @@ export function resolveUrl(url: string): Promise<ResolvedUrl> {
   }).then((r) => json<ResolvedUrl>(r))
 }
 
-export function startRun(project: string, ref: string): Promise<{ id: string; verified: boolean }> {
+export function startRun(project: string, ref: string, build?: string): Promise<{ id: string; verified: boolean }> {
   return fetch(`${BASE}/runs`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ project, ref }),
+    body: JSON.stringify(build ? { project, ref, build } : { project, ref }),
   }).then((r) => json(r))
 }
 

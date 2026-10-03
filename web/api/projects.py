@@ -39,6 +39,10 @@ class InvalidRef(ValueError):
     """The ref string is not something this runner will pass to git."""
 
 
+class UnknownBuild(ValueError):
+    """The build key is not one this project offers, or one was needed and not given."""
+
+
 class InvalidUrl(ValueError):
     """The pasted text is not a GitHub repository URL this runner understands."""
 
@@ -61,6 +65,18 @@ class Submodule:
 
 
 @dataclasses.dataclass(frozen=True)
+class Build:
+    """One way of building a project that gets its own profile. A project with
+    several (Trezor: the emulator, the device firmware, the device kernel) is
+    traced once per build, and the results are read side by side."""
+
+    key: str
+    label: str
+    summary: str
+    profile: str  # absolute path to the profile YAML
+
+
+@dataclasses.dataclass(frozen=True)
 class Project:
     key: str
     name: str
@@ -75,6 +91,9 @@ class Project:
     # Explains a build-set failure. `says` is shown only when the path check
     # (`exists` / `missing`, inside the checkout) holds for the ref that failed.
     build_hints: tuple["BuildHint", ...] = ()
+    # Empty for a project with one profile. Otherwise `profile` is the first
+    # build's, and every run must name one of these.
+    builds: tuple[Build, ...] = ()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -107,6 +126,15 @@ def _submodule(raw: dict, where: str) -> Submodule:
     return Submodule(path, raw["url"], nested)
 
 
+def _profile_path(profile: str, where: str) -> str:
+    if not isinstance(profile, str) or os.path.isabs(profile) or ".." in profile.split("/"):
+        raise AllowlistError(f"{where}: profile {profile!r} must be a repo-relative path")
+    profile_abs = os.path.join(REPO_ROOT, profile)
+    if not os.path.isfile(profile_abs):
+        raise AllowlistError(f"{where}: profile {profile!r} does not exist")
+    return profile_abs
+
+
 def load_projects(path: str | None = None) -> dict[str, Project]:
     path = path or os.environ.get("ENTROPY_TRACE_PROJECTS_YAML") or DEFAULT_PROJECTS_YAML
     with open(path) as f:
@@ -120,18 +148,32 @@ def load_projects(path: str | None = None) -> dict[str, Project]:
         where = f"{path}: project {key!r}"
         if not _PROJECT_KEY_RE.match(str(key)):
             raise AllowlistError(f"{where}: key must be lowercase letters, digits and dashes")
-        for field in ("name", "url", "profile", "refs"):
+        for field in ("name", "url", "refs"):
             if field not in entry:
                 raise AllowlistError(f"{where}: missing required field {field!r}")
+        if ("profile" in entry) == ("builds" in entry):
+            raise AllowlistError(f"{where}: needs exactly one of `profile` (one build) or `builds` (several)")
         if not _GITHUB_URL_RE.match(entry["url"]):
             raise AllowlistError(f"{where}: url {entry['url']!r} is not a plain https://github.com/<owner>/<repo> URL")
 
-        profile = entry["profile"]
-        if os.path.isabs(profile) or ".." in profile.split("/"):
-            raise AllowlistError(f"{where}: profile {profile!r} must be a repo-relative path")
-        profile_abs = os.path.join(REPO_ROOT, profile)
-        if not os.path.isfile(profile_abs):
-            raise AllowlistError(f"{where}: profile {profile!r} does not exist")
+        builds: list[Build] = []
+        if "builds" in entry:
+            raw_builds = entry["builds"]
+            if not isinstance(raw_builds, dict) or len(raw_builds) < 2:
+                raise AllowlistError(f"{where}: `builds` is a mapping of at least two builds; for one, use `profile`")
+            for build_key, raw_build in raw_builds.items():
+                if not _PROJECT_KEY_RE.match(str(build_key)):
+                    raise AllowlistError(f"{where}: build key {build_key!r} must be lowercase letters, digits and dashes")
+                for field in ("label", "profile"):
+                    if field not in raw_build:
+                        raise AllowlistError(f"{where}: build {build_key!r} is missing {field!r}")
+                builds.append(
+                    Build(str(build_key), raw_build["label"], raw_build.get("summary", ""),
+                          _profile_path(raw_build["profile"], f"{where}: build {build_key!r}"))
+                )
+            profile_abs = builds[0].profile
+        else:
+            profile_abs = _profile_path(entry["profile"], where)
 
         refs = []
         for r in entry["refs"]:
@@ -161,6 +203,7 @@ def load_projects(path: str | None = None) -> dict[str, Project]:
             timeout_seconds=int(entry.get("timeout_seconds", 900)),
             prepare_timeout_seconds=int(entry.get("prepare_timeout_seconds", 1800)),
             build_hints=tuple(_build_hint(h, where) for h in entry.get("build_hints", [])),
+            builds=tuple(builds),
         )
     return projects
 
@@ -172,6 +215,21 @@ def get_project(projects: dict[str, Project], key: object) -> Project:
     if not isinstance(key, str) or key not in projects:
         raise UnknownProject(f"{key!r} is not an allowlisted project")
     return projects[key]
+
+
+def get_build(project: Project, key: object) -> Build | None:
+    """The build a run is for. A one-profile project has no builds and takes no
+    key; a several-build project needs one of its own keys. Nothing is guessed:
+    picking the emulator for someone who did not say which would answer a
+    different question than the one they asked."""
+    if not project.builds:
+        if key is not None:
+            raise UnknownBuild(f"{project.name} has a single build; do not name one")
+        return None
+    for build in project.builds:
+        if key == build.key:
+            return build
+    raise UnknownBuild(f"{project.name} has several builds ({', '.join(b.key for b in project.builds)}); name one")
 
 
 def validate_ref(ref: object) -> str:

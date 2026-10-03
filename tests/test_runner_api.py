@@ -71,34 +71,33 @@ def fake_remote(tmp_path_factory):
     return repo
 
 
-def _allowlist(tmp_path, timeout=120) -> str:
+def _allowlist(tmp_path, timeout=120, builds=False) -> str:
     path = tmp_path / "projects.yaml"
-    path.write_text(
-        yaml.safe_dump(
-            {
-                "projects": {
-                    "synthetic": {
-                        "name": "Synthetic",
-                        "url": "https://github.com/example/synthetic",
-                        "profile": PROFILE,
-                        "timeout_seconds": timeout,
-                        "refs": [{"ref": "v-vuln", "label": "vulnerable (synthetic)", "source": "corpus/synthetic"}],
-                    }
-                }
-            }
-        )
-    )
+    entry = {
+        "name": "Synthetic",
+        "url": "https://github.com/example/synthetic",
+        "timeout_seconds": timeout,
+        "refs": [{"ref": "v-vuln", "label": "vulnerable (synthetic)", "source": "corpus/synthetic"}],
+    }
+    if builds:
+        entry["builds"] = {
+            "alpha": {"label": "Alpha build", "summary": "the first way", "profile": PROFILE},
+            "beta": {"label": "Beta build", "summary": "the second way", "profile": PROFILE},
+        }
+    else:
+        entry["profile"] = PROFILE
+    path.write_text(yaml.safe_dump({"projects": {"synthetic": entry}}))
     return str(path)
 
 
-def _make_client(tmp_path, fake_remote, monkeypatch, timeout=120):
+def _make_client(tmp_path, fake_remote, monkeypatch, timeout=120, builds=False):
     cache = tmp_path / "cache"
     (cache / "repos").mkdir(parents=True)
     bare = cache / "repos" / "synthetic.git"
     subprocess.run(["git", "clone", "-q", "--bare", str(fake_remote), str(bare)], check=True, capture_output=True)
     (bare / "entropytrace-clone-complete").write_text("")
     monkeypatch.setenv("ENTROPY_TRACE_CACHE_DIR", str(cache))
-    monkeypatch.setenv("ENTROPY_TRACE_PROJECTS_YAML", _allowlist(tmp_path, timeout))
+    monkeypatch.setenv("ENTROPY_TRACE_PROJECTS_YAML", _allowlist(tmp_path, timeout, builds))
     monkeypatch.setenv("ENTROPY_TRACE_WARM", "0")
     sys.modules.pop("main", None)
     main = importlib.import_module("main")
@@ -115,10 +114,7 @@ def client(tmp_path, fake_remote, monkeypatch):
         sys.modules.pop("main", None)
 
 
-def _run(client, ref, project="synthetic", wait=90):
-    resp = client.post("/api/runs", json={"project": project, "ref": ref})
-    assert resp.status_code == 202, resp.text
-    run_id = resp.json()["id"]
+def _wait(client, run_id, wait=90):
     deadline = time.time() + wait
     while time.time() < deadline:
         snap = client.get(f"/api/runs/{run_id}").json()
@@ -126,6 +122,12 @@ def _run(client, ref, project="synthetic", wait=90):
             return run_id, snap
         time.sleep(0.2)
     raise AssertionError("run did not finish")
+
+
+def _run(client, ref, project="synthetic", wait=90, **extra):
+    resp = client.post("/api/runs", json={"project": project, "ref": ref, **extra})
+    assert resp.status_code == 202, resp.text
+    return _wait(client, resp.json()["id"], wait)
 
 
 # --- rejected before any work -------------------------------------------------
@@ -433,3 +435,66 @@ def test_old_unverified_worktrees_are_evicted_but_verified_ones_stay(tmp_path, f
     assert shas["v-vuln"] in left  # verified: never evicted
     assert shas["bad-preprocess"] in left  # the most recently used unverified one survives
     assert shas["v-patched"] not in left and shas["bad-build"] not in left
+
+
+# --- a project with several builds --------------------------------------------
+
+
+@pytest.fixture
+def multi_client(tmp_path, fake_remote, monkeypatch):
+    c, cache = _make_client(tmp_path, fake_remote, monkeypatch, builds=True)
+    c.cache = cache
+    try:
+        yield c
+    finally:
+        sys.modules.pop("main", None)
+
+
+def test_the_projects_and_resolve_endpoints_list_the_builds_without_a_path(multi_client):
+    p = multi_client.get("/api/projects").json()["projects"][0]
+    assert [b["key"] for b in p["builds"]] == ["alpha", "beta"]
+    assert p["builds"][0] == {"key": "alpha", "label": "Alpha build", "summary": "the first way"}
+    resolved = _resolve(multi_client, BASE_URL).json()
+    assert [b["key"] for b in resolved["builds"]] == ["alpha", "beta"]
+    assert "profile" not in str(p) and "profile" not in str(resolved)
+
+
+def test_a_project_with_several_builds_will_not_guess_which_one(multi_client):
+    resp = multi_client.post("/api/runs", json={"project": "synthetic", "ref": "v-vuln"})
+    assert resp.status_code == 400
+    assert "alpha" in resp.json()["detail"] and "beta" in resp.json()["detail"]
+    assert _nothing_was_done(multi_client)
+
+
+def test_an_unknown_build_or_a_path_for_a_build_is_rejected_before_any_work(multi_client):
+    for build in ("gamma", "../alpha", "/etc/passwd", "", "ALPHA"):
+        resp = multi_client.post("/api/runs", json={"project": "synthetic", "ref": "v-vuln", "build": build})
+        assert resp.status_code == 400, build
+    assert _nothing_was_done(multi_client)
+
+
+def test_naming_a_build_for_a_single_build_project_is_rejected(client):
+    resp = client.post("/api/runs", json={"project": "synthetic", "ref": "v-vuln", "build": "alpha"})
+    assert resp.status_code == 400
+    assert _nothing_was_done(client)
+
+
+def test_every_build_runs_on_the_one_checkout_and_its_result_says_which_build_it_is(multi_client):
+    # Started together, as the UI does: the shared checkout serialises them.
+    ids = {}
+    for build in ("alpha", "beta"):
+        resp = multi_client.post("/api/runs", json={"project": "synthetic", "ref": "v-vuln", "build": build})
+        assert resp.status_code == 202, resp.text
+        ids[build] = resp.json()["id"]
+    for build, run_id in ids.items():
+        snap = _wait(multi_client, run_id)[1]
+        assert snap["status"] == "succeeded", snap["outcome"]
+        assert (snap["build"], snap["build_label"]) == (build, f"{build.capitalize()} build")
+        label = multi_client.get(f"/api/runs/{run_id}/findings").json()["label"]
+        assert label == f"vulnerable (synthetic) \u00b7 {build.capitalize()} build"
+    assert len(list((multi_client.cache / "worktrees" / "synthetic").iterdir())) == 1
+
+
+def test_a_single_build_run_reports_no_build(client):
+    snap = _run(client, "v-vuln")[1]
+    assert snap["build"] is None and snap["build_label"] is None

@@ -26,7 +26,7 @@ import yaml
 import repo_cache
 from failure import Outcome, classify, parse_marker
 from proc import CommandTimeout, run_streaming, tool_env
-from projects import REPO_ROOT, InvalidRef, Project, validate_ref
+from projects import REPO_ROOT, Build, InvalidRef, Project, validate_ref
 
 MAX_LOG_LINES = 6000
 MAX_CONCURRENT_RUNS = int(os.environ.get("ENTROPY_TRACE_MAX_CONCURRENT_RUNS", "2"))
@@ -51,6 +51,7 @@ class Job:
     sha: str
     verified: bool
     verified_label: str | None
+    build: Build | None = None
     status: str = "queued"  # queued | running | succeeded | failed
     stage: str = "prepare"
     outcome: Outcome | None = None
@@ -80,6 +81,8 @@ class Job:
             "resolved_sha": self.sha,
             "verified": self.verified,
             "verified_label": self.verified_label,
+            "build": self.build.key if self.build else None,
+            "build_label": self.build.label if self.build else None,
             "status": self.status,
             "stage": self.stage,
             "outcome": self.outcome.as_dict() if self.outcome else None,
@@ -165,14 +168,15 @@ def get_clone_ready(project: Project) -> bool:
 # --- profile derivation ----------------------------------------------------
 
 
-def derive_profile(project: Project, worktree: str, sha: str, label: str) -> dict:
-    """The base profile with the checkout, commit and label replaced, and
+def derive_profile(project: Project, worktree: str, sha: str, label: str, build: Build | None = None) -> dict:
+    """The base profile (the named build's, for a project with several) with the checkout, commit and label replaced, and
     relative catalogue paths made absolute so the file can live in the run's
     own directory. Nothing about how to analyse the project changes."""
-    with open(project.profile) as f:
+    base_profile = build.profile if build else project.profile
+    with open(base_profile) as f:
         raw = yaml.safe_load(f)
     derived = copy.deepcopy(raw)
-    base_dir = os.path.dirname(project.profile)
+    base_dir = os.path.dirname(base_profile)
     derived["repo_root"] = worktree
     derived["commit"] = sha
     derived["label"] = label
@@ -235,8 +239,10 @@ def sink_evidence(profile_path: str, worktree: str) -> str:
 # --- the run ---------------------------------------------------------------
 
 
-def start_run(project: Project, ref: str, sha: str, verified: bool, verified_label: str | None) -> Job:
-    job = Job(uuid.uuid4().hex[:12], project.key, ref, sha, verified, verified_label)
+def start_run(
+    project: Project, ref: str, sha: str, verified: bool, verified_label: str | None, build: Build | None = None
+) -> Job:
+    job = Job(uuid.uuid4().hex[:12], project.key, ref, sha, verified, verified_label, build)
     with _jobs_guard:
         _jobs[job.id] = job
     _prune()
@@ -244,10 +250,10 @@ def start_run(project: Project, ref: str, sha: str, verified: bool, verified_lab
     return job
 
 
-def _label_for(project: Project, ref: str, sha: str, verified_label: str | None) -> str:
-    if verified_label:
-        return verified_label
-    return f"{ref} ({sha[:10]}) - unverified"
+def _label_for(ref: str, sha: str, verified_label: str | None, build: Build | None) -> str:
+    label = verified_label or f"{ref} ({sha[:10]}) - unverified"
+    # Results from different builds of one commit must not look alike once saved.
+    return f"{label} \u00b7 {build.label}" if build else label
 
 
 def _execute(job: Job, project: Project) -> None:
@@ -260,7 +266,7 @@ def _execute(job: Job, project: Project) -> None:
     profile = None
     try:
         job.status, job.stage = "running", "prepare"
-        job.log(f"{project.name} @ {job.ref} ({job.sha[:12]})")
+        job.log(f"{project.name}{' (' + job.build.label + ')' if job.build else ''} @ {job.ref} ({job.sha[:12]})")
         try:
             repo_cache.fetch(project, job.log)
             keep = {job.sha} | {repo_cache.resolve_ref(project, r.ref) for r in project.refs}
@@ -273,7 +279,9 @@ def _execute(job: Job, project: Project) -> None:
 
         if prepare_error is None:
             os.makedirs(run_dir, exist_ok=True)
-            profile = derive_profile(project, worktree, job.sha, _label_for(project, job.ref, job.sha, job.verified_label))
+            profile = derive_profile(
+                project, worktree, job.sha, _label_for(job.ref, job.sha, job.verified_label, job.build), job.build
+            )
             profile_path = os.path.join(run_dir, "profile.yaml")
             with open(profile_path, "w") as f:
                 yaml.safe_dump(profile, f, sort_keys=False)
@@ -301,6 +309,8 @@ def _execute(job: Job, project: Project) -> None:
                 "--profile", profile_path, "--output", out_path, "--mode", "pr", "--report-stages",
             ]
             lock = repo_cache._lock(f"run:{worktree}")
+            if lock.locked():
+                job.log("another run is using this checkout; waiting for it to finish")
             with lock, _slots:
                 job.log("starting the analysis")
                 try:
