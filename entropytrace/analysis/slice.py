@@ -74,6 +74,10 @@ except ImportError:  # pragma: no cover
 _SKIP_PATH_SEGMENTS = {"py", "extmod", "stm32lib"}
 
 
+# A safety valve on the branching walk below; the real chains seen so far need a handful.
+_MAX_EXPLORED_FUNCTIONS = 200
+
+
 def _skip_path(file_: str) -> bool:
     segments = set(file_.replace("\\", "/").split("/"))
     return bool(segments & _SKIP_PATH_SEGMENTS)
@@ -517,10 +521,14 @@ def walk_c_chain(
 ) -> tuple[list[Hop], Classification | None, str | None]:
     hops = [Hop("c_call", start_symbol, start_file, start_line)]
     text_cache: dict = {}
-    symbol, tu = start_symbol, start_tu
-    visited = {(start_symbol, start_tu)}
+    # Cycle guard along the current path, and a memo of functions already
+    # explored without reaching a terminal, so a function reachable from two
+    # callers is only walked once.
+    on_path = {(start_symbol, start_tu)}
+    dead: set = set()
+    budget = [_MAX_EXPLORED_FUNCTIONS]
 
-    for _ in range(max_hops):
+    def explore(symbol: str, tu: str, hops: list[Hop], depth: int):
         text, err = _preprocessed_text(tu, build_set, stub_dir, text_cache, target_yaml)
         if text is None:
             return hops, None, f"could not preprocess {tu!r}: {err}"
@@ -533,10 +541,15 @@ def walk_c_chain(
         cls = classify(symbol, func_text, registry)
         if cls is not None:
             return hops, cls, None
+        if depth >= max_hops:
+            return hops, None, f"exceeded max_hops={max_hops} without reaching a registry match"
+        budget[0] -= 1
+        if budget[0] < 0:
+            return hops, None, f"gave up after exploring {_MAX_EXPLORED_FUNCTIONS} functions without reaching a registry match"
 
-        next_defn, next_how = None, None
         tried = []
         library_terminal = None
+        best_failure = None  # the dead end that got furthest, reported if no branch succeeds
         for callee in calls:
             if callee == symbol:
                 continue
@@ -545,45 +558,54 @@ def walk_c_chain(
             )
             tried.append((callee, how))
             if defn is None:
-                # No definition anywhere in the build set - not
-                # necessarily a dead end. A call like getrandom() or
-                # rand() never has a definition to walk into (it's a
+                # No definition anywhere in the build set -- this is not
+                # necessarily a dead end. A call like getrandom()/rand()/
+                # arc4random() never has a definition to walk into (it's a
                 # libc/OS function), so it could otherwise never become a
-                # hop at all, and the registry's function_name entries
-                # for exactly these symbols would be unreachable. If the
-                # registry recognises this bare name, that recognition
-                # itself IS the terminal classification - record it
-                # (file/line/tu are genuinely unknown, there's no source
-                # to point at) and keep it as a fallback in case a later
-                # candidate resolves to a real, walkable definition
-                # instead (a locally-defined function always wins over a
-                # same-named library call, so this never masks a real
-                # chain).
+                # hop at all, and the registry's function_name entries for
+                # exactly these symbols would be unreachable. If the
+                # registry recognises this bare name, that recognition IS the
+                # terminal classification (file/line/tu are genuinely
+                # unknown, since there is no source to point at). It is kept
+                # as a fallback: a real, walkable branch always takes
+                # priority, so this never masks a real chain.
                 if library_terminal is None:
                     cls = classify_by_name(callee, registry)
                     if cls is not None:
                         library_terminal = (callee, cls)
                 continue
-            if _skip_path(defn.file) or (defn.symbol, defn.tu) in visited:
+            key = (defn.symbol, defn.tu)
+            if _skip_path(defn.file) or key in on_path or key in dead:
                 continue
-            next_defn, next_how = defn, how
-            break
-
-        if next_defn is None and library_terminal is not None:
-            callee, cls = library_terminal
-            hops.append(Hop("c_call", callee, None, None, detail="library (no source; classified by name)"))
-            return hops, cls, None
-
-        if next_defn is None:
-            return hops, None, (
-                f"{symbol!r} (in {tu!r}) matched no registry entry and has no "
-                f"further non-runtime call to follow -- candidates tried: {tried}"
+            # A walkable call. Try it; if it dead-ends, try this function's
+            # later calls instead of giving up on the first one -- the first
+            # call is often an argument-conversion or logging helper, not the
+            # entropy source.
+            on_path.add(key)
+            branch_hops, cls, reason = explore(
+                defn.symbol, defn.tu, hops + [Hop("c_call", defn.symbol, defn.file, defn.line, detail=how)], depth + 1
             )
-        symbol, tu = next_defn.symbol, next_defn.tu
-        visited.add((symbol, tu))
-        hops.append(Hop("c_call", symbol, next_defn.file, next_defn.line, detail=next_how))
+            on_path.discard(key)
+            if cls is not None:
+                return branch_hops, cls, None
+            dead.add(key)
+            # Report the branch that got furthest; the first one wins a tie.
+            if best_failure is None or len(branch_hops) > len(best_failure[0]):
+                best_failure = (branch_hops, reason)
 
-    return hops, None, f"exceeded max_hops={max_hops} without reaching a registry match"
+        if library_terminal is not None:
+            callee, cls = library_terminal
+            return hops + [Hop("c_call", callee, None, None, detail="library (no source; classified by name)")], cls, None
+
+        if best_failure is not None:
+            return best_failure[0], None, best_failure[1]
+
+        return hops, None, (
+            f"{symbol!r} (in {tu!r}) matched no registry entry and has no "
+            f"further non-runtime call to follow -- candidates tried: {tried}"
+        )
+
+    return explore(start_symbol, start_tu, hops, 0)
 
 
 def _single_source_result(

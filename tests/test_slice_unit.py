@@ -753,3 +753,109 @@ def test_an_alias_that_resolves_says_why_in_the_ffi_hop(tmp_path, monkeypatch):
     assert "resolved via 'trezorcrypto.random.bytes'" in ffi.detail
     assert "`random` is imported from trezor.crypto at src/app.py:2" in ffi.detail
     assert "re-exports it from trezorcrypto at src/trezor/crypto/__init__.py:2" in ffi.detail
+
+
+# --- walk_c_chain tries a function's later calls when an earlier one dead-ends.
+
+# `entry` calls a helper first (walkable, but it reaches nothing), then the
+# function that actually leads to a registry hit. The first call is the dead end.
+BACKTRACK_C = """
+static int helper(int x) { return x + 1; }
+static int leaf_prng(void) { return 4; }
+static int real(void) { return leaf_prng(); }
+int entry(void) {
+    int n = helper(3);
+    return real() + n;
+}
+"""
+
+
+def _walk(tmp, name, content, symbol="entry"):
+    build_set = _build_set_for(tmp, name, content)
+    idx = build_symbol_index(build_set, os.path.join(tmp, "stub"))
+    return walk_c_chain(symbol, name, name, 1, build_set, idx, REGISTRY, os.path.join(tmp, "stub"))
+
+
+def test_a_dead_end_first_call_does_not_hide_a_later_call_that_reaches_a_terminal():
+    with tempfile.TemporaryDirectory() as tmp:
+        hops, cls, reason = _walk(tmp, "bt.c", BACKTRACK_C)
+        assert reason is None
+        assert cls is not None and cls.category == SourceClass.NON_CRYPTO_PRNG
+        # only the branch that worked is in the chain, not the helper that did not
+        assert [h.symbol for h in hops] == ["entry", "real", "leaf_prng"]
+
+
+def test_when_the_first_call_works_the_walk_is_what_it_always_was():
+    with tempfile.TemporaryDirectory() as tmp:
+        hops, cls, _ = _walk(tmp, "chain.c", SYNTHETIC_CHAIN_C)
+        assert [h.symbol for h in hops] == ["entry", "middle", "leaf_prng"]
+        assert cls.category == SourceClass.NON_CRYPTO_PRNG
+
+
+def test_when_every_branch_dead_ends_the_one_that_got_furthest_is_reported():
+    src = """
+static int shallow(void) { return 1; }
+static int d2(void) { return 2; }
+static int d1(void) { return d2(); }
+int entry(void) {
+    shallow();
+    return d1();
+}
+"""
+    with tempfile.TemporaryDirectory() as tmp:
+        hops, cls, reason = _walk(tmp, "deep.c", src)
+        assert cls is None
+        assert [h.symbol for h in hops] == ["entry", "d1", "d2"]  # not the shallower `shallow`
+        assert "'d2'" in reason
+
+
+def test_a_call_cycle_terminates():
+    src = """
+static int b(void);
+static int a(void) { return b(); }
+static int b(void) { return a(); }
+int entry(void) { return a(); }
+"""
+    with tempfile.TemporaryDirectory() as tmp:
+        hops, cls, reason = _walk(tmp, "cycle.c", src)
+        assert cls is None and reason
+
+
+def test_a_library_call_classified_by_name_is_used_when_the_walkable_branches_fail():
+    src = """
+int leaf_prng(void);
+static int helper(int x) { return x + 1; }
+int entry(void) {
+    int n = helper(3);
+    return leaf_prng() + n;
+}
+"""
+    with tempfile.TemporaryDirectory() as tmp:
+        hops, cls, reason = _walk(tmp, "lib.c", src)
+        assert reason is None
+        assert cls.category == SourceClass.NON_CRYPTO_PRNG
+        assert hops[-1].symbol == "leaf_prng"
+        assert "classified by name" in hops[-1].detail
+
+
+def test_a_real_branch_still_beats_a_library_call_of_the_same_kind():
+    src = """
+int leaf_prng(void);
+static int hw(void) { return MAGIC_HW_REGISTER_MARKER; }
+int entry(void) {
+    leaf_prng();
+    return hw();
+}
+"""
+    with tempfile.TemporaryDirectory() as tmp:
+        hops, cls, _ = _walk(tmp, "prio.c", src)
+        assert cls.category == SourceClass.HW_TRNG  # the walkable branch, not the library name
+        assert [h.symbol for h in hops] == ["entry", "hw"]
+
+
+def test_the_exploration_has_a_budget_and_says_so(monkeypatch):
+    monkeypatch.setattr(slice_mod, "_MAX_EXPLORED_FUNCTIONS", 1)
+    with tempfile.TemporaryDirectory() as tmp:
+        _, cls, reason = _walk(tmp, "bt.c", BACKTRACK_C)
+        assert cls is None
+        assert "gave up after exploring 1 functions" in reason
