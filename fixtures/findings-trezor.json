@@ -1,0 +1,231 @@
+{
+  "schema_version": "1.3.0",
+  "generated_at": "2026-10-03T09:57:17.095693+00:00",
+  "label": "Trezor core (tag core/v2.9.2)",
+  "build_profile": {
+    "repo": "trezor/trezor-firmware",
+    "commit": "ff1c4a3",
+    "board": "scons",
+    "make_vars": {},
+    "sysroot": {
+      "used": false
+    }
+  },
+  "sink": {
+    "name": "reset_device",
+    "language": "python",
+    "file": "core/src/apps/management/reset_device/__init__.py",
+    "line": 33,
+    "category": "SEED_GENERATION",
+    "entropy_critical": true,
+    "mechanism": "catalogue"
+  },
+  "config_values": [],
+  "chain": [
+    {
+      "index": 0,
+      "kind": "python_sink",
+      "symbol": "reset_device",
+      "file": "core/src/apps/management/reset_device/__init__.py",
+      "line": 33,
+      "detail": "",
+      "resolution_verdict": null
+    },
+    {
+      "index": 1,
+      "kind": "ffi",
+      "symbol": "random.bytes",
+      "file": "core/src/apps/management/reset_device/__init__.py",
+      "line": 87,
+      "detail": "-> mod_trezorcrypto_random_bytes (resolved via 'trezorcrypto.random.bytes': `random` is imported from trezor.crypto at core/src/apps/management/reset_device/__init__.py:35, which re-exports it from trezorcrypto at core/src/trezor/crypto/__init__.py:9)",
+      "resolution_verdict": null
+    },
+    {
+      "index": 2,
+      "kind": "c_call",
+      "symbol": "mod_trezorcrypto_random_bytes",
+      "file": "core/embed/upymod/modtrezorcrypto/modtrezorcrypto-random.h",
+      "line": 49,
+      "detail": "",
+      "resolution_verdict": null
+    },
+    {
+      "index": 3,
+      "kind": "c_call",
+      "symbol": "trezor_obj_get_uint",
+      "file": "core/./embed/upymod/trezorobj.h",
+      "line": 52,
+      "detail": "local",
+      "resolution_verdict": "local"
+    }
+  ],
+  "terminal": null,
+  "status": "UNKNOWN",
+  "unknown_reason": "'trezor_obj_get_uint' (in 'embed/upymod/modtrezorcrypto/modtrezorcrypto.c') matched no registry entry and has no further non-runtime call to follow -- candidates tried: [('mp_obj_is_small_int', 'local'), ('mp_raise_TypeError', 'resolve()'), ('MP_COMPRESSED_ROM_TEXT', 'local'), ('mp_obj_is_obj', 'local'), ('mpz_as_uint_checked', 'resolve()'), ('mp_raise_msg', 'resolve()'), ('MP_COMPRESSED_ROM_TEXT', 'local'), ('mp_raise_TypeError', 'resolve()'), ('MP_COMPRESSED_ROM_TEXT', 'local')]",
+  "confidence": "low",
+  "unknown_count": 1,
+  "entropy_shape": "single",
+  "contributions": [
+    {
+      "source_expr": "random.bytes",
+      "status": "UNKNOWN",
+      "unknown_reason": "'trezor_obj_get_uint' (in 'embed/upymod/modtrezorcrypto/modtrezorcrypto.c') matched no registry entry and has no further non-runtime call to follow -- candidates tried: [('mp_obj_is_small_int', 'local'), ('mp_raise_TypeError', 'resolve()'), ('MP_COMPRESSED_ROM_TEXT', 'local'), ('mp_obj_is_obj', 'local'), ('mpz_as_uint_checked', 'resolve()'), ('mp_raise_msg', 'resolve()'), ('MP_COMPRESSED_ROM_TEXT', 'local'), ('mp_raise_TypeError', 'resolve()'), ('MP_COMPRESSED_ROM_TEXT', 'local')]",
+      "chain": [
+        {
+          "index": 0,
+          "kind": "python_sink",
+          "symbol": "reset_device",
+          "file": "core/src/apps/management/reset_device/__init__.py",
+          "line": 33,
+          "detail": "",
+          "resolution_verdict": null
+        },
+        {
+          "index": 1,
+          "kind": "ffi",
+          "symbol": "random.bytes",
+          "file": "core/src/apps/management/reset_device/__init__.py",
+          "line": 87,
+          "detail": "-> mod_trezorcrypto_random_bytes (resolved via 'trezorcrypto.random.bytes': `random` is imported from trezor.crypto at core/src/apps/management/reset_device/__init__.py:35, which re-exports it from trezorcrypto at core/src/trezor/crypto/__init__.py:9)",
+          "resolution_verdict": null
+        },
+        {
+          "index": 2,
+          "kind": "c_call",
+          "symbol": "mod_trezorcrypto_random_bytes",
+          "file": "core/embed/upymod/modtrezorcrypto/modtrezorcrypto-random.h",
+          "line": 49,
+          "detail": "",
+          "resolution_verdict": null
+        },
+        {
+          "index": 3,
+          "kind": "c_call",
+          "symbol": "trezor_obj_get_uint",
+          "file": "core/./embed/upymod/trezorobj.h",
+          "line": 52,
+          "detail": "local",
+          "resolution_verdict": "local"
+        }
+      ]
+    }
+  ],
+  "coverage": {
+    "sinks_found": 1,
+    "sinks_found_by_category": {
+      "SEED_GENERATION": 1
+    },
+    "chains_closed": 0,
+    "chains_unknown": 1,
+    "percentage_resolved": 0.0,
+    "chains": [
+      {
+        "sink_name": "reset_device",
+        "sink_category": "SEED_GENERATION",
+        "entropy_critical": true,
+        "mechanism": "catalogue",
+        "file": "core/src/apps/management/reset_device/__init__.py",
+        "line": 33,
+        "status": "UNKNOWN",
+        "chain": [
+          {
+            "index": 0,
+            "kind": "python_sink",
+            "symbol": "reset_device",
+            "file": "core/src/apps/management/reset_device/__init__.py",
+            "line": 33,
+            "detail": "",
+            "resolution_verdict": null
+          },
+          {
+            "index": 1,
+            "kind": "ffi",
+            "symbol": "random.bytes",
+            "file": "core/src/apps/management/reset_device/__init__.py",
+            "line": 87,
+            "detail": "-> mod_trezorcrypto_random_bytes (resolved via 'trezorcrypto.random.bytes': `random` is imported from trezor.crypto at core/src/apps/management/reset_device/__init__.py:35, which re-exports it from trezorcrypto at core/src/trezor/crypto/__init__.py:9)",
+            "resolution_verdict": null
+          },
+          {
+            "index": 2,
+            "kind": "c_call",
+            "symbol": "mod_trezorcrypto_random_bytes",
+            "file": "core/embed/upymod/modtrezorcrypto/modtrezorcrypto-random.h",
+            "line": 49,
+            "detail": "",
+            "resolution_verdict": null
+          },
+          {
+            "index": 3,
+            "kind": "c_call",
+            "symbol": "trezor_obj_get_uint",
+            "file": "core/./embed/upymod/trezorobj.h",
+            "line": 52,
+            "detail": "local",
+            "resolution_verdict": "local"
+          }
+        ],
+        "entropy_shape": "single",
+        "contributions": [
+          {
+            "source_expr": "random.bytes",
+            "status": "UNKNOWN",
+            "unknown_reason": "'trezor_obj_get_uint' (in 'embed/upymod/modtrezorcrypto/modtrezorcrypto.c') matched no registry entry and has no further non-runtime call to follow -- candidates tried: [('mp_obj_is_small_int', 'local'), ('mp_raise_TypeError', 'resolve()'), ('MP_COMPRESSED_ROM_TEXT', 'local'), ('mp_obj_is_obj', 'local'), ('mpz_as_uint_checked', 'resolve()'), ('mp_raise_msg', 'resolve()'), ('MP_COMPRESSED_ROM_TEXT', 'local'), ('mp_raise_TypeError', 'resolve()'), ('MP_COMPRESSED_ROM_TEXT', 'local')]",
+            "chain": [
+              {
+                "index": 0,
+                "kind": "python_sink",
+                "symbol": "reset_device",
+                "file": "core/src/apps/management/reset_device/__init__.py",
+                "line": 33,
+                "detail": "",
+                "resolution_verdict": null
+              },
+              {
+                "index": 1,
+                "kind": "ffi",
+                "symbol": "random.bytes",
+                "file": "core/src/apps/management/reset_device/__init__.py",
+                "line": 87,
+                "detail": "-> mod_trezorcrypto_random_bytes (resolved via 'trezorcrypto.random.bytes': `random` is imported from trezor.crypto at core/src/apps/management/reset_device/__init__.py:35, which re-exports it from trezorcrypto at core/src/trezor/crypto/__init__.py:9)",
+                "resolution_verdict": null
+              },
+              {
+                "index": 2,
+                "kind": "c_call",
+                "symbol": "mod_trezorcrypto_random_bytes",
+                "file": "core/embed/upymod/modtrezorcrypto/modtrezorcrypto-random.h",
+                "line": 49,
+                "detail": "",
+                "resolution_verdict": null
+              },
+              {
+                "index": 3,
+                "kind": "c_call",
+                "symbol": "trezor_obj_get_uint",
+                "file": "core/./embed/upymod/trezorobj.h",
+                "line": 52,
+                "detail": "local",
+                "resolution_verdict": "local"
+              }
+            ]
+          }
+        ],
+        "unknown_reason": "'trezor_obj_get_uint' (in 'embed/upymod/modtrezorcrypto/modtrezorcrypto.c') matched no registry entry and has no further non-runtime call to follow -- candidates tried: [('mp_obj_is_small_int', 'local'), ('mp_raise_TypeError', 'resolve()'), ('MP_COMPRESSED_ROM_TEXT', 'local'), ('mp_obj_is_obj', 'local'), ('mpz_as_uint_checked', 'resolve()'), ('mp_raise_msg', 'resolve()'), ('MP_COMPRESSED_ROM_TEXT', 'local'), ('mp_raise_TypeError', 'resolve()'), ('MP_COMPRESSED_ROM_TEXT', 'local')]",
+        "broke_at_hop": "trezor_obj_get_uint"
+      }
+    ]
+  },
+  "policy": {
+    "mode": "pr",
+    "verdicts": [
+      {
+        "sink_name": "reset_device",
+        "status": "UNKNOWN",
+        "terminal_category": null,
+        "verdict": "WARN"
+      }
+    ],
+    "overall_verdict": "WARN"
+  }
+}

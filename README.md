@@ -132,15 +132,37 @@ generic `make -n` backend from layer 1 can run against Coldcard's checkout
 without any of that being layer 1's problem.
 
 A dotted call doesn't always point straight at a registered C module, either.
-`analysis/slice.py`'s `_resolve_ffi_with_fallbacks` tries two further shapes
-before giving up: an import-aliased re-export (`from trezor.crypto import
-random` where `trezor.crypto` itself just re-exports `trezorcrypto`'s own
-module one level down), and a plain Python wrapper file sitting next to the
-caller (Coldcard's `callgate.py`) - re-entering the same dotted-call walk one
-level deeper inside it rather than a second, separate walker. And a dotted
-call can also terminate without ever crossing into C at all: if the registry
-recognises it by name (e.g. `hashlib.sha256`), the walk stops right there,
-classified, the same way a bare C library call already does in `walk_c_chain`.
+The binder's founding assumption is that a call's first name is the real
+`MP_REGISTER_MODULE` name. Coldcard satisfies it (`import ngu; ngu.random.bytes`);
+other wallets bind the same module under a different local name. Three real
+shapes break the assumption, and `analysis/slice.py`'s
+`_resolve_ffi_with_fallbacks` handles two of them:
+
+| Shape | Seen in | Status |
+|---|---|---|
+| Import alias: the name is bound by an import (`from trezor.crypto import random`, `import trezorcrypto as tc`), possibly re-exported once by a package's `__init__.py` | Trezor | Handled. The import is read from the file under analysis and followed through one level of `__init__.py`; the chain records which statements made `random` mean `trezorcrypto.random`. |
+| Plain Python wrapper module: the name is a `.py` file next to the caller, not a C module | Coldcard (`callgate.py`) | Handled. The same dotted-call walk is re-entered one level deeper, inside the wrapper. |
+| Instance attribute of a C-registered class (`common.noise.random_bytes`, where `noise` is an instance) | Foundation Passport | Not handled. It needs type inference, a different and much harder problem, so it stays an UNKNOWN with its reason. |
+
+The import work is strictly lexical and bounded. It reads the import statements
+in the file and the `__init__.py` they point at, only the ones directly in the
+function or module body (an import under an `if`, `try` or loop is conditional,
+so it is not followed), with no `sys.path` emulation and no symbol table. A
+second re-export is noticed and named in the UNKNOWN, not followed. A name with
+no matching import is left alone.
+
+Closing the alias does not by itself close Trezor's chain. It reaches the real C
+function behind `random.bytes`, then stops: the C walker follows the first call
+it can resolve, a MicroPython argument helper, and never tries the later calls
+that are the real entropy source. And the profile builds Trezor's unix emulator,
+whose RNG is an insecure PRNG by design, so a closed chain there would say nothing
+about the device. The evidence is in `corpus/trezor.yaml`, and
+`docs/coverage-matrix.md` lists every project's computed result.
+
+A dotted call can also terminate without ever crossing into C at all: if the
+registry recognises it by name (e.g. `hashlib.sha256`), the walk stops right
+there, classified, the same way a bare C library call already does in
+`walk_c_chain`.
 
 **7. The backward slice:** _tying it all together - walk from the sink until you
 hit something classifiable._  

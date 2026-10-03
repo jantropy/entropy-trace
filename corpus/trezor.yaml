@@ -1,0 +1,68 @@
+# Entropy Trace corpus: Trezor (trezor-firmware, core/), reset_device().
+#
+# Every path, symbol and line below was read from the source at the analysed ref.
+#
+# Result: UNKNOWN (policy WARN). The trace gets from Python into the real C
+# function behind `random.bytes`, following the import that makes `random` mean
+# `trezorcrypto.random`, and then stops at a helper that is not the entropy
+# source. It should not be expected to turn green by closing it: see
+# `beyond_the_stop`.
+#
+# The analysed ref is not how the project builds today. trezor-firmware main has
+# no core/SConstruct; it builds with Cargo and core/embed/xtask. core/v2.9.2 is
+# the newest tag found that still builds with SCons, so this profile does not
+# reach, and cannot currently reach, whatever main builds.
+
+case: trezor-reset-device-entropy
+
+analysed_build:
+  repo: https://github.com/trezor/trezor-firmware
+  ref: core/v2.9.2
+  sha: ff1c4a31d6ee3cc7663a0e3361b761cd1b3aea90
+  build: "SCons, unix emulator target (scons PYOPT=0 build/unix/trezor-emu-core), run in core/"
+
+verified_chain:
+  python_sink: {symbol: reset_device, file: core/src/apps/management/reset_device/__init__.py, line: 33}
+  import_alias:
+    # One level of re-export: the local name `random` is trezor.crypto.random,
+    # which trezor/crypto/__init__.py re-exports from trezorcrypto.random.
+    - {file: core/src/apps/management/reset_device/__init__.py, line: 35, text: "from trezor.crypto import random   # inside reset_device(), not at module level"}
+    - {file: core/src/trezor/crypto/__init__.py, line: 9, text: "random,   # in `from trezorcrypto import (...)`, whose statement starts at line 1"}
+    - {file: core/embed/upymod/modtrezorcrypto/modtrezorcrypto.c, line: 153, text: "MP_REGISTER_MODULE(MP_QSTR_trezorcrypto, mp_module_trezorcrypto);"}
+    - {file: core/embed/upymod/modtrezorcrypto/modtrezorcrypto.c, line: 121, text: "{MP_ROM_QSTR(MP_QSTR_random), MP_ROM_PTR(&mod_trezorcrypto_random_module)},"}
+  re_export_levels_needed: 1
+  ffi_call: {expression: "random.bytes(32, True)", file: core/src/apps/management/reset_device/__init__.py, line: 87}
+  c_symbol_for_bytes: {symbol: mod_trezorcrypto_random_bytes, file: core/embed/upymod/modtrezorcrypto/modtrezorcrypto-random.h, line: 49}
+  next_hop_followed: {symbol: trezor_obj_get_uint, file: core/embed/upymod/trezorobj.h, line: 52}
+  status: UNKNOWN
+  broke_at_hop: trezor_obj_get_uint
+  entropy_shape: single
+
+beyond_the_stop:
+  # Read from the source; not computed by the tool.
+  - >
+    modtrezorcrypto-random.h:51 calls trezor_obj_get_uint(args[0]) first, a
+    MicroPython argument-conversion helper. The C walker follows the first call it
+    can resolve and does not backtrack, so it never reaches the real entropy calls:
+    rng_fill_buffer_strong (line 58, taken when `strong` is set, which
+    reset_device passes) or rng_fill_buffer (line 64).
+  - >
+    rng_fill_buffer (core/embed/sec/rng/unix/rng.c:26) has two bodies chosen by a
+    macro: with USE_INSECURE_PRNG it calls random_buffer (crypto/rand_insecure.c),
+    otherwise it reads /dev/urandom. core/SConscript.unix:94 defines
+    USE_INSECURE_PRNG for this build, and `scons --dry-run` confirms it: the real
+    compile lines for embed/sec/rng/unix/rng.c and embed/sec/rng/rng_common.c both
+    carry -D'USE_INSECURE_PRNG'. So on this build the end of the chain is an
+    insecure PRNG, by design: it is the emulator.
+  - >
+    rng_fill_buffer_strong (core/embed/sec/rng/rng_common.c:37) fills the buffer
+    from the platform RNG and XORs in optiga_random_buffer (USE_OPTIGA) and
+    tropic_random_buffer (USE_TROPIC, PRODUCTION): a mix of sources inside C. The
+    tool detects a mix only at the Python level.
+
+what_this_means: >
+  Closing this chain on the unix emulator build would not say anything about a
+  real Trezor: it would end at the emulator's insecure PRNG. Analysing the device
+  means the firmware target (the stm32 RNG), a build this profile does not reach.
+  Making the trace reach the end at all needs the C walker to try a function's
+  later calls when the first one dead-ends, which is separate from import aliases.

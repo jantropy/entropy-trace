@@ -1,0 +1,36 @@
+# Trezor (trezor-firmware, core/) at tag core/v2.9.2, analysed through its
+# SCons unix emulator build.
+#
+# This is not how the project builds today: trezor-firmware main has no
+# core/SConstruct and builds with Cargo and core/embed/xtask. v2.9.2 is the newest
+# tag found that still has an SConstruct.
+#
+# No adapter is needed: `scons --dry-run` works against the unix target directly.
+# It is the emulator, not the device, so the RNG it reaches is the emulator's.
+repo_root: /Users/satadel/scratch-entropy/trezor
+label: "Trezor core (tag core/v2.9.2)"
+commit: "ff1c4a3"
+repo: "trezor/trezor-firmware"
+
+build:
+  backend: scons
+  dir: core
+  scons_args:
+    - "PYOPT=0"
+    - "build/unix/trezor-emu-core"
+
+target_yaml: null  # host-targeted (unix emulator build, no cross-compilation)
+
+sinks:
+  - name: reset_device
+    category: SEED_GENERATION
+    language: python
+    file: core/src/apps/management/reset_device/__init__.py
+    entry_symbol: reset_device
+    note: >
+      Trezor's new-wallet entropy entry point (an async def). It combines
+      internal entropy (random.bytes, imported as `from trezor.crypto import
+      random`, which trezor/crypto/__init__.py re-exports from the registered
+      trezorcrypto C module) with entropy the host supplies over USB
+      (entropy_ack.entropy), by concatenation then hash
+      (_compute_secret_from_entropy).
