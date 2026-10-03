@@ -121,22 +121,27 @@
           "executionSuccessful": true,
           "properties": {
             "sysroot": {
-              "used": false
+              "used": true,
+              "cache_key": "alpine-3.16.0-gcc-arm-none-eabi-11.2.0-r2-newlib-4.2.0.20211231-r1",
+              "resolved_packages": {
+                "gcc-arm-none-eabi": "gcc-arm-none-eabi-11.2.0-r2",
+                "newlib-arm-none-eabi": "newlib-arm-none-eabi-4.2.0.20211231-r1"
+              }
             }
           }
         }
       ],
       "results": [
         {
-          "ruleId": "entropy-trace/non-crypto-prng",
-          "level": "error",
+          "ruleId": "entropy-trace/unknown",
+          "level": "warning",
           "message": {
-            "text": "Entropy-critical sink 'reset_device' resolved to NON_CRYPTO_PRNG, a forbidden source class under policy mode 'pr'."
+            "text": "Entropy-critical sink 'reset_device' could not be resolved to a classified terminal under policy mode 'pr': 'syscall_invoke2' (in 'embed/sys/syscall/stm32/syscall_stubs.c') matched no registry entry and has no further non-runtime call to follow -- candidates tried: []"
           },
           "locations": [
             {
               "message": {
-                "text": "Entropy-critical sink 'reset_device' resolved to NON_CRYPTO_PRNG, a forbidden source class under policy mode 'pr'."
+                "text": "Entropy-critical sink 'reset_device' could not be resolved to a classified terminal under policy mode 'pr': 'syscall_invoke2' (in 'embed/sys/syscall/stm32/syscall_stubs.c') matched no registry entry and has no further non-runtime call to follow -- candidates tried: []"
               },
               "physicalLocation": {
                 "artifactLocation": {
@@ -205,10 +210,10 @@
                         },
                         "physicalLocation": {
                           "artifactLocation": {
-                            "uri": "core/embed/sec/rng/rng_common.c"
+                            "uri": "core/embed/sys/syscall/stm32/syscall_stubs.c"
                           },
                           "region": {
-                            "startLine": 37
+                            "startLine": 553
                           }
                         }
                       }
@@ -216,14 +221,14 @@
                     {
                       "location": {
                         "message": {
-                          "text": "hop 4: rng_fill_buffer (c_call) -- resolution: RESOLVED"
+                          "text": "hop 4: syscall_invoke2 (c_call) -- resolution: local"
                         },
                         "physicalLocation": {
                           "artifactLocation": {
-                            "uri": "core/embed/sec/rng/unix/rng.c"
+                            "uri": "core/embed/sys/syscall/stm32/syscall_internal.h"
                           },
                           "region": {
-                            "startLine": 26
+                            "startLine": 69
                           }
                         }
                       }
@@ -231,29 +236,14 @@
                     {
                       "location": {
                         "message": {
-                          "text": "hop 5: random_buffer (c_call) -- resolution: RESOLVED"
+                          "text": "UNKNOWN: 'syscall_invoke2' (in 'embed/sys/syscall/stm32/syscall_stubs.c') matched no registry entry and has no further non-runtime call to follow -- candidates tried: []"
                         },
                         "physicalLocation": {
                           "artifactLocation": {
-                            "uri": "core/vendor/trezor-crypto/rand_insecure.c"
+                            "uri": "core/embed/sys/syscall/stm32/syscall_internal.h"
                           },
                           "region": {
-                            "startLine": 42
-                          }
-                        }
-                      }
-                    },
-                    {
-                      "location": {
-                        "message": {
-                          "text": "hop 6: lcg_get_u32 (c_call) -- resolution: local"
-                        },
-                        "physicalLocation": {
-                          "artifactLocation": {
-                            "uri": "core/vendor/trezor-crypto/rand_insecure.c"
-                          },
-                          "region": {
-                            "startLine": 35
+                            "startLine": 69
                           }
                         }
                       }
@@ -264,7 +254,7 @@
             }
           ],
           "partialFingerprints": {
-            "entropyTrace/sinkTerminal/v1": "catalogue|SEED_GENERATION|reset_device|CLASSIFIED|NON_CRYPTO_PRNG"
+            "entropyTrace/sinkTerminal/v1": "catalogue|SEED_GENERATION|reset_device|UNKNOWN|"
           }
         }
       ]

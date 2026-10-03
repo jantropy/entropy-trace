@@ -1,0 +1,41 @@
+# Trezor (trezor-firmware, core/) at tag core/v2.9.2, the SCons KERNEL target
+# (Model T, STM32F4): the privileged half of the device build.
+#
+# In this release the unprivileged firmware does not read the RNG hardware; it
+# makes a syscall into the kernel (see profiles/trezor-firmware.yaml, where the
+# reset_device chain stops at the syscall stub). The real read lives here, in
+# embed/sec/rng/stm32/rng.c, compiled with -DKERNEL and SECURE_MODE.
+#
+# This profile therefore traces the kernel's own RNG entry point, not
+# reset_device. It does not connect the two: following a syscall from the
+# firmware stub into the kernel's dispatcher is a boundary this tool does not
+# resolve.
+#
+# Same build and preprocessing approach as trezor-firmware.yaml: `scons
+# --dry-run -k` for the real arm-none-eabi-gcc compile lines, the host compiler
+# standing in with the captured Cortex-M4 target macros (gcc 11.2.0, not
+# necessarily Trezor's own pinned toolchain).
+repo_root: /Users/satadel/scratch-entropy/trezor
+label: "Trezor core kernel (tag core/v2.9.2, Model T)"
+commit: "ff1c4a3"
+repo: "trezor/trezor-firmware"
+
+build:
+  backend: scons
+  dir: core
+  scons_args:
+    - "-k"
+    - "build/kernel/kernel.bin"
+
+target_yaml: data/targets/arm-none-eabi-cortex-m4-gcc11.yaml
+
+sinks:
+  - name: rng_fill_buffer_strong
+    category: SEED_GENERATION
+    language: c
+    file: core/embed/sec/rng/rng_common.c
+    entry_symbol: rng_fill_buffer_strong
+    note: >
+      The kernel's strong random-fill, which random.bytes(n, True) reaches
+      through a syscall. It fills the buffer from rng_fill_buffer (the STM32
+      TRNG peripheral) and XORs in optional secure-element reads.

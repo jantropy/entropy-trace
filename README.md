@@ -151,13 +151,22 @@ so it is not followed), with no `sys.path` emulation and no symbol table. A
 second re-export is noticed and named in the UNKNOWN, not followed. A name with
 no matching import is left alone.
 
-Closing the alias does not by itself close Trezor's chain. It reaches the real C
-function behind `random.bytes`, then stops: the C walker follows the first call
-it can resolve, a MicroPython argument helper, and never tries the later calls
-that are the real entropy source. And the profile builds Trezor's unix emulator,
-whose RNG is an insecure PRNG by design, so a closed chain there would say nothing
-about the device. The evidence is in `corpus/trezor.yaml`, and
-`docs/coverage-matrix.md` lists every project's computed result.
+Following the alias is only the first part of Trezor's chain. It reaches the real C
+function behind `random.bytes`, and what happens next depends on which build is
+analysed, so there are three profiles for the same tag:
+
+| Profile | What it builds | Result |
+|---|---|---|
+| `trezor.yaml` | the unix emulator | Closes at an insecure PRNG, a FAIL, and a FAIL for the emulator by design: its build selects `USE_INSECURE_PRNG`. |
+| `trezor-firmware.yaml` | the device's unprivileged firmware | UNKNOWN at a syscall stub: the firmware does not read the RNG hardware, it asks the kernel. |
+| `trezor-kernel.yaml` | the device's privileged kernel | The kernel's own RNG entry point ends at the STM32 TRNG, PASS. It is not joined to `reset_device`. |
+
+The C walker tries a function's later calls when the first one dead-ends (the first
+call in Trezor's `random.bytes` is an argument-conversion helper), so the emulator
+chain gets through. Joining the firmware half to the kernel half needs a syscall
+resolver, which does not exist. The evidence for all three, with file and line, is in
+`corpus/trezor.yaml`, and `docs/coverage-matrix.md` lists every project's computed
+result.
 
 A dotted call can also terminate without ever crossing into C at all: if the
 registry recognises it by name (e.g. `hashlib.sha256`), the walk stops right

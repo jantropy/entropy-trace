@@ -1,0 +1,37 @@
+# Trezor (trezor-firmware, core/) at tag core/v2.9.2, analysed through the
+# SCons FIRMWARE target (Model T, STM32F4), not the unix emulator that
+# profiles/trezor.yaml uses. The Python layer is the same; the platform layer
+# below it is the device's (embed/sec/rng/stm32/rng.c, not .../unix/rng.c).
+#
+# `scons --dry-run -k` prints the real arm-none-eabi-gcc compile lines without
+# needing the toolchain; -k keeps it going past the one error a dry run hits,
+# `build/kernel/kernel.bin` not existing (the kernel is a separate build, and
+# the firmware only embeds its binary, so that node compiles nothing).
+#
+# Preprocessing runs with the host compiler standing in for arm-none-eabi-gcc
+# and this project's captured ARM Cortex-M4 target macros, as for Coldcard. Those
+# macros are from gcc 11.2.0, not necessarily the exact toolchain Trezor's own
+# build pins: a labelled substitution, not the real cross-compiler.
+repo_root: /Users/satadel/scratch-entropy/trezor
+label: "Trezor core firmware (tag core/v2.9.2, Model T)"
+commit: "ff1c4a3"
+repo: "trezor/trezor-firmware"
+
+build:
+  backend: scons
+  dir: core
+  scons_args:
+    - "-k"
+    - "build/firmware/firmware.bin"
+
+target_yaml: data/targets/arm-none-eabi-cortex-m4-gcc11.yaml
+
+sinks:
+  - name: reset_device
+    category: SEED_GENERATION
+    language: python
+    file: core/src/apps/management/reset_device/__init__.py
+    entry_symbol: reset_device
+    note: >
+      Trezor's new-wallet entropy entry point (an async def); see
+      profiles/trezor.yaml.

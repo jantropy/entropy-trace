@@ -32,7 +32,7 @@ PROJECT_PROFILES = [
     ("Coldcard", ["coldcard-vulnerable.yaml", "coldcard-patched.yaml"]),
     ("Trust Wallet Core", ["trustwallet-vulnerable.yaml", "trustwallet-patched.yaml"]),
     ("libsodium", ["libsodium.yaml"]),
-    ("Trezor (core/v2.9.2)", ["trezor.yaml"]),
+    ("Trezor (core/v2.9.2)", ["trezor.yaml", "trezor-firmware.yaml", "trezor-kernel.yaml"]),
 ]
 
 

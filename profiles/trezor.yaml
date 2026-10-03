@@ -8,7 +8,7 @@
 # No adapter is needed: `scons --dry-run` works against the unix target directly.
 # It is the emulator, not the device, so the RNG it reaches is the emulator's.
 repo_root: /Users/satadel/scratch-entropy/trezor
-label: "Trezor core (tag core/v2.9.2)"
+label: "Trezor core, unix emulator (tag core/v2.9.2)"
 commit: "ff1c4a3"
 repo: "trezor/trezor-firmware"
 
@@ -34,3 +34,16 @@ sinks:
       trezorcrypto C module) with entropy the host supplies over USB
       (entropy_ack.entropy), by concatenation then hash
       (_compute_secret_from_entropy).
+
+# trezor-crypto's insecure PRNG, which this emulator build selects (the real
+# compile lines carry -DUSE_INSECURE_PRNG). Profile-local on purpose: the name
+# means nothing in a build that does not define that macro.
+extra_sources:
+  - symbol: "lcg_get_u32"
+    match_kind: function_name
+    category: NON_CRYPTO_PRNG
+    note: >
+      crypto/rand_insecure.c: a linear congruential generator from Numerical
+      Recipes over a static seed that starts at 0, compiled only under
+      USE_INSECURE_PRNG. The file carries #pragma message "NOT SUITABLE FOR
+      PRODUCTION USE!".

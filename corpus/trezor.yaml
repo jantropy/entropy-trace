@@ -1,17 +1,12 @@
 # Entropy Trace corpus: Trezor (trezor-firmware, core/), reset_device().
 #
-# Every path, symbol and line below was read from the source at the analysed ref.
+# Every path, symbol and line below was read from the source at the analysed ref or
+# comes from a real run of the profile named.
 #
-# Result: UNKNOWN (policy WARN). The trace gets from Python into the real C
-# function behind `random.bytes`, following the import that makes `random` mean
-# `trezorcrypto.random`, and then stops at a helper that is not the entropy
-# source. It should not be expected to turn green by closing it: see
-# `beyond_the_stop`.
-#
-# The analysed ref is not how the project builds today. trezor-firmware main has
-# no core/SConstruct; it builds with Cargo and core/embed/xtask. core/v2.9.2 is
-# the newest tag found that still builds with SCons, so this profile does not
-# reach, and cannot currently reach, whatever main builds.
+# The analysed ref is not how the project builds today. trezor-firmware main has no
+# core/SConstruct; it builds with Cargo and core/embed/xtask. core/v2.9.2 is the
+# newest tag found that still builds with SCons, so these profiles do not reach, and
+# cannot currently reach, whatever main builds.
 
 case: trezor-reset-device-entropy
 
@@ -19,9 +14,19 @@ analysed_build:
   repo: https://github.com/trezor/trezor-firmware
   ref: core/v2.9.2
   sha: ff1c4a31d6ee3cc7663a0e3361b761cd1b3aea90
-  build: "SCons, unix emulator target (scons PYOPT=0 build/unix/trezor-emu-core), run in core/"
+  model: T2T1 (Trezor Model T, STM32F4, Cortex-M4)
+  builds:
+    emulator: "scons PYOPT=0 build/unix/trezor-emu-core, host-compiled desktop emulator (profiles/trezor.yaml)"
+    firmware: "scons -k build/firmware/firmware.bin, the unprivileged half of the device (profiles/trezor-firmware.yaml)"
+    kernel: "scons -k build/kernel/kernel.bin, the privileged half of the device (profiles/trezor-kernel.yaml)"
+  note: >
+    The device profiles use `scons --dry-run -k`, which prints the real
+    arm-none-eabi-gcc compile lines without the toolchain. Preprocessing runs with
+    the host compiler standing in and this project's captured Cortex-M4 target
+    macros (gcc 11.2.0, not necessarily Trezor's own pinned toolchain).
 
-verified_chain:
+# The Python half is the same on every build.
+python_half:
   python_sink: {symbol: reset_device, file: core/src/apps/management/reset_device/__init__.py, line: 33}
   import_alias:
     # One level of re-export: the local name `random` is trezor.crypto.random,
@@ -33,36 +38,73 @@ verified_chain:
   re_export_levels_needed: 1
   ffi_call: {expression: "random.bytes(32, True)", file: core/src/apps/management/reset_device/__init__.py, line: 87}
   c_symbol_for_bytes: {symbol: mod_trezorcrypto_random_bytes, file: core/embed/upymod/modtrezorcrypto/modtrezorcrypto-random.h, line: 49}
-  next_hop_followed: {symbol: trezor_obj_get_uint, file: core/embed/upymod/trezorobj.h, line: 52}
-  status: UNKNOWN
-  broke_at_hop: trezor_obj_get_uint
-  entropy_shape: single
+  calls_in_order: >
+    modtrezorcrypto-random.h:51 trezor_obj_get_uint(args[0]) (an argument-conversion
+    helper that reaches no entropy), then line 58 rng_fill_buffer_strong (taken when
+    `strong` is set, which reset_device passes), or line 64 rng_fill_buffer.
 
-beyond_the_stop:
-  # Read from the source; not computed by the tool.
-  - >
-    modtrezorcrypto-random.h:51 calls trezor_obj_get_uint(args[0]) first, a
-    MicroPython argument-conversion helper. The C walker follows the first call it
-    can resolve and does not backtrack, so it never reaches the real entropy calls:
-    rng_fill_buffer_strong (line 58, taken when `strong` is set, which
-    reset_device passes) or rng_fill_buffer (line 64).
-  - >
-    rng_fill_buffer (core/embed/sec/rng/unix/rng.c:26) has two bodies chosen by a
-    macro: with USE_INSECURE_PRNG it calls random_buffer (crypto/rand_insecure.c),
-    otherwise it reads /dev/urandom. core/SConscript.unix:94 defines
-    USE_INSECURE_PRNG for this build, and `scons --dry-run` confirms it: the real
-    compile lines for embed/sec/rng/unix/rng.c and embed/sec/rng/rng_common.c both
-    carry -D'USE_INSECURE_PRNG'. So on this build the end of the chain is an
-    insecure PRNG, by design: it is the emulator.
-  - >
-    rng_fill_buffer_strong (core/embed/sec/rng/rng_common.c:37) fills the buffer
-    from the platform RNG and XORs in optiga_random_buffer (USE_OPTIGA) and
-    tropic_random_buffer (USE_TROPIC, PRODUCTION): a mix of sources inside C. The
-    tool detects a mix only at the Python level.
+results:
+  emulator:
+    status: CLASSIFIED
+    terminal: NON_CRYPTO_PRNG
+    verdict: FAIL   # a FAIL for the emulator build, by design: see below
+    chain_after_the_c_function:
+      - {symbol: rng_fill_buffer_strong, file: core/embed/sec/rng/rng_common.c, line: 37}
+      - {symbol: rng_fill_buffer, file: core/embed/sec/rng/unix/rng.c, line: 26}
+      - {symbol: random_buffer, file: core/vendor/trezor-crypto/rand_insecure.c, line: 42}
+      - {symbol: lcg_get_u32, file: core/vendor/trezor-crypto/rand_insecure.c, line: 35}
+    why: >
+      rng_fill_buffer (unix/rng.c:26) has two bodies chosen by a macro: with
+      USE_INSECURE_PRNG it calls random_buffer, otherwise it reads /dev/urandom.
+      core/SConscript.unix:94 defines USE_INSECURE_PRNG, and `scons --dry-run`
+      confirms it: the real compile lines for embed/sec/rng/unix/rng.c and
+      embed/sec/rng/rng_common.c both carry -D'USE_INSECURE_PRNG'.
+      rand_insecure.c is a linear congruential generator from Numerical Recipes
+      over a static seed that starts at 0, and carries #pragma message "NOT
+      SUITABLE FOR PRODUCTION USE!". The terminal comes from a profile-local
+      registry entry for lcg_get_u32; this says something about the emulator, not
+      about a real Trezor.
+  firmware:
+    status: UNKNOWN
+    broke_at_hop: syscall_invoke2
+    chain_after_the_c_function:
+      - {symbol: rng_fill_buffer_strong, file: core/embed/sys/syscall/stm32/syscall_stubs.c, line: 553}
+      - {symbol: syscall_invoke2, file: core/embed/sys/syscall/stm32/syscall_internal.h, line: 69}
+    why: >
+      In the device's firmware build rng_fill_buffer_strong is a syscall stub. The
+      unprivileged firmware does not read the RNG hardware; it asks the kernel. The
+      trace stops at the privilege boundary, which this tool does not resolve.
+  kernel:
+    status: CLASSIFIED
+    terminal: HW_TRNG
+    verdict: PASS
+    sink: rng_fill_buffer_strong   # the kernel's own RNG entry point, not reset_device
+    chain:
+      - {symbol: rng_fill_buffer_strong, file: core/embed/sec/rng/rng_common.c, line: 37}
+      - {symbol: rng_fill_buffer, file: core/embed/sec/rng/stm32/rng.c, line: 66}
+      - {symbol: rng_get_u32, file: core/embed/sec/rng/stm32/rng.c, line: 53}
+      - {symbol: rng_read_u32, file: core/embed/sec/rng/stm32/rng.c, line: 40}
+    why: >
+      The kernel build compiles embed/sec/rng/stm32/rng.c with -DKERNEL and
+      SECURE_MODE; rng_read_u32 reads the STM32 TRNG peripheral register
+      (RNG->DR), which the registry recognises. For this Model T build neither
+      USE_OPTIGA nor USE_TROPIC is defined (checked on the real compile line of
+      rng_common.c), so the secure-element XOR branches in rng_fill_buffer_strong
+      are compiled out: the device's strong random fill here is the platform
+      TRNG alone. Other models define those macros and mix in a secure element
+      inside C, which this tool's mix detection would not see.
+
+what_is_not_connected: >
+  The link from reset_device to the kernel's RNG is the syscall the firmware half
+  stops at. core/embed/sys/syscall/stm32/syscall_dispatch.c:567 shows the
+  dispatcher calling rng_fill_buffer_strong__verified for that syscall, but that
+  is a reading of the source, not a trace the tool computed. Following a syscall
+  from a stub into the dispatcher and on to the handler would be a new kind of
+  boundary resolver, comparable to the one for Python-to-C calls.
 
 what_this_means: >
-  Closing this chain on the unix emulator build would not say anything about a
-  real Trezor: it would end at the emulator's insecure PRNG. Analysing the device
-  means the firmware target (the stm32 RNG), a build this profile does not reach.
-  Making the trace reach the end at all needs the C walker to try a function's
-  later calls when the first one dead-ends, which is separate from import aliases.
+  Three results, three different statements. The emulator's reset_device ends at an
+  insecure PRNG, by design. The device's firmware half ends at a syscall. The
+  device's kernel half, read directly, ends at the hardware TRNG. Only the second
+  and third together say anything about a real Trezor, and the tool does not join
+  them.
