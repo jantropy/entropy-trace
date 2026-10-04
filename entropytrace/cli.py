@@ -17,6 +17,7 @@ import os
 import sys
 
 from entropytrace.analysis.policy import evaluate as evaluate_policy
+from entropytrace.analysis.policy import is_untraced_anchor
 from entropytrace.analysis.sinks import (
     find_bip32_master_seed_sink,
     locate_c_catalogue_sink,
@@ -350,7 +351,12 @@ def write_step_summary(findings: dict, path: str) -> None:
     ]
     verdict_by_name = {v["sink_name"]: v["verdict"] for v in policy["verdicts"]}
     for entry in cov["chains"]:
-        verdict = verdict_by_name.get(entry["sink_name"], "n/a (not entropy-critical)")
+        verdict = verdict_by_name.get(
+            entry["sink_name"],
+            "not counted (seed consumed here, not traced yet)"
+            if is_untraced_anchor(entry)
+            else "n/a (not entropy-critical)",
+        )
         terminal = entry.get("terminal_category", entry.get("unknown_reason", "UNKNOWN"))
         chain_str = " -> ".join(h["symbol"] for h in entry.get("chain", [])) or "(no hops traced)"
         lines.append(f"- **{entry['sink_name']}** ({entry['file']}:{entry['line']}) -- {verdict}: {terminal}")

@@ -56,7 +56,7 @@ UNKNOWN_ENTRY = {
     "sink_name": "s_hdnode_from_master",
     "sink_category": "SEED_GENERATION",
     "entropy_critical": True,
-    "mechanism": "structural_anchor",
+    "mechanism": "catalogue",  # an ordinary sink whose chain could not be followed
     "file": "hdnode.c",
     "line": 10,
     "status": "UNKNOWN",
@@ -235,3 +235,9 @@ def test_no_forbidden_language_in_messages():
             text = rule[field]["text"].lower()
             for word in forbidden:
                 assert word not in text, f"forbidden word {word!r} in rule {rule['id']} {field}: {text!r}"
+
+
+def test_an_untraced_anchor_gets_no_result_because_it_has_no_verdict():
+    anchor = {**UNKNOWN_ENTRY, "mechanism": "structural_anchor"}
+    sarif = build_sarif(_findings([anchor]))
+    assert sarif["runs"][0]["results"] == []

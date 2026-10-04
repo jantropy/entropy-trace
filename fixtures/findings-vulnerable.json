@@ -196,12 +196,6 @@
     "mode": "pr",
     "verdicts": [
       {
-        "sink_name": "s_hdnode_from_master",
-        "status": "UNKNOWN",
-        "terminal_category": null,
-        "verdict": "WARN"
-      },
-      {
         "sink_name": "generate_seed",
         "status": "CLASSIFIED",
         "terminal_category": "NON_CRYPTO_PRNG",

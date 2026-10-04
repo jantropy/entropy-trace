@@ -133,56 +133,6 @@
       ],
       "results": [
         {
-          "ruleId": "entropy-trace/unknown",
-          "level": "warning",
-          "message": {
-            "text": "Entropy-critical sink 's_hdnode_from_master' could not be resolved to a classified terminal under policy mode 'pr': 'master_secret_in' is a formal parameter of 's_hdnode_from_master', not a callable entry point -- tracing what flows into it requires backward interprocedural argument tracing across this function's call sites, which slice.py does not implement (see this function's docstring)"
-          },
-          "locations": [
-            {
-              "message": {
-                "text": "Entropy-critical sink 's_hdnode_from_master' could not be resolved to a classified terminal under policy mode 'pr': 'master_secret_in' is a formal parameter of 's_hdnode_from_master', not a callable entry point -- tracing what flows into it requires backward interprocedural argument tracing across this function's call sites, which slice.py does not implement (see this function's docstring)"
-              },
-              "physicalLocation": {
-                "artifactLocation": {
-                  "uri": "boards/COLDCARD_MK4/c-modules/libngu/hdnode.c"
-                },
-                "region": {
-                  "startLine": 297
-                }
-              }
-            }
-          ],
-          "codeFlows": [
-            {
-              "threadFlows": [
-                {
-                  "locations": [
-                    {
-                      "location": {
-                        "message": {
-                          "text": "UNKNOWN: 'master_secret_in' is a formal parameter of 's_hdnode_from_master', not a callable entry point -- tracing what flows into it requires backward interprocedural argument tracing across this function's call sites, which slice.py does not implement (see this function's docstring)"
-                        },
-                        "physicalLocation": {
-                          "artifactLocation": {
-                            "uri": "boards/COLDCARD_MK4/c-modules/libngu/hdnode.c"
-                          },
-                          "region": {
-                            "startLine": 297
-                          }
-                        }
-                      }
-                    }
-                  ]
-                }
-              ]
-            }
-          ],
-          "partialFingerprints": {
-            "entropyTrace/sinkTerminal/v1": "structural_anchor|SEED_GENERATION|s_hdnode_from_master|UNKNOWN|"
-          }
-        },
-        {
           "ruleId": "entropy-trace/non-crypto-prng",
           "level": "error",
           "message": {

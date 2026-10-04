@@ -44,7 +44,7 @@ def test_list_findings_summary_has_verdict_and_label(client):
     resp = client.get("/api/findings")
     by_name = {item["name"]: item for item in resp.json()}
     assert by_name["findings-vulnerable.json"]["overall_verdict"] == "FAIL"
-    assert by_name["findings-patched.json"]["overall_verdict"] == "WARN"
+    assert by_name["findings-patched.json"]["overall_verdict"] == "PASS"
     assert by_name["findings-vulnerable.json"]["label"]
 
 

@@ -4,7 +4,7 @@
 
 export interface Hop {
   index: number
-  kind: 'python_sink' | 'ffi' | 'c_call'
+  kind: 'python_sink' | 'ffi' | 'c_call' | 'python_call'
   symbol: string
   file: string | null
   line: number | null
@@ -26,6 +26,15 @@ export interface ConfigValue {
   line: number
 }
 
+// One independent source within a mix: walked and classified on its own.
+export interface Contribution {
+  source_expr: string
+  status: 'CLASSIFIED' | 'UNKNOWN'
+  terminal_category?: string
+  unknown_reason?: string
+  chain: Hop[]
+}
+
 export interface CoverageChainEntry {
   sink_name: string
   sink_category: string
@@ -38,6 +47,9 @@ export interface CoverageChainEntry {
   unknown_reason?: string
   broke_at_hop?: string
   chain?: Hop[]
+  // Absent on a result from before these fields existed: read as "single".
+  entropy_shape?: 'single' | 'mix'
+  contributions?: Contribution[]
 }
 
 export interface Coverage {

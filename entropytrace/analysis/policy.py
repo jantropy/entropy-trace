@@ -143,6 +143,17 @@ def decide_mix(contributions: list[tuple[str, str | None]], mode: str = "pr") ->
     return Verdict.WARN if mode == Mode.PR.value else Verdict.FAIL
 
 
+def is_untraced_anchor(entry: dict) -> bool:
+    """A sink the BIP-32 structural anchor found whose chain could not be
+    followed. The anchor locates where a seed is consumed (the `"Bitcoin seed"`
+    HMAC), and tracing what flows into it needs backward argument tracing the
+    tool does not do yet, so it can never resolve today. It is reported as "not
+    yet traced" and takes no part in the verdict: only sinks that generate
+    entropy decide PASS, WARN or FAIL. An anchor that does resolve is an
+    ordinary sink with a verdict."""
+    return entry.get("mechanism") == "structural_anchor" and entry.get("status") == "UNKNOWN"
+
+
 @dataclasses.dataclass(frozen=True)
 class SinkVerdict:
     sink_name: str
@@ -163,7 +174,12 @@ def evaluate(findings: dict, mode: str = "pr") -> dict:
 
     Sinks with entropy_critical=False are skipped entirely: never
     evaluated, never given a verdict. They still exist in
-    findings["coverage"] itself, just not in this policy object.
+    findings["coverage"] itself, just not in this policy object. So is an
+    anchor sink that could not be traced (see `is_untraced_anchor`).
+
+    A result must never turn green because nothing was evaluated: if every
+    sink found is such an anchor, the overall verdict is the one a bare
+    UNKNOWN gets (WARN in pr mode, FAIL in audit mode).
 
     Raises if `findings` has no `coverage` section - this function only
     re-reads already-computed data, and there's nothing to evaluate
@@ -174,8 +190,12 @@ def evaluate(findings: dict, mode: str = "pr") -> dict:
         raise ValueError("findings document has no 'coverage' section to evaluate policy against")
 
     verdicts: list[dict] = []
+    untraced_anchors = 0
     for entry in coverage["chains"]:
         if not entry.get("entropy_critical", False):
+            continue
+        if is_untraced_anchor(entry):
+            untraced_anchors += 1
             continue
         contributions = entry.get("contributions") or []
         # decide_mix only for a genuine mix (more than one independent
@@ -196,6 +216,8 @@ def evaluate(findings: dict, mode: str = "pr") -> dict:
         )
 
     overall = Verdict.PASS
+    if untraced_anchors and not verdicts:
+        overall = decide("UNKNOWN", None, mode)
     for v in verdicts:
         candidate = Verdict(v["verdict"])
         if _SEVERITY[candidate] > _SEVERITY[overall]:

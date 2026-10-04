@@ -33,7 +33,7 @@ UNKNOWN_ENTRY = {
     "sink_name": "s_hdnode_from_master",
     "sink_category": "SEED_GENERATION",
     "entropy_critical": True,
-    "mechanism": "structural_anchor",
+    "mechanism": "catalogue",  # an ordinary sink whose chain could not be followed
     "file": "hdnode.c",
     "line": 10,
     "status": "UNKNOWN",
@@ -309,3 +309,25 @@ def test_coverage_numbers_are_explained_without_script():
     report = build_report_html(_findings([FAIL_ENTRY]))
     assert "<details" in report and "what these numbers mean" in report
     assert "Closed isn&#x27;t the same as good" in report
+
+
+# --- an anchor sink that could not be traced -------------------------------------
+
+ANCHOR_ENTRY = {**UNKNOWN_ENTRY, "mechanism": "structural_anchor"}
+
+
+def test_an_untraced_anchor_is_listed_as_not_yet_traced_and_not_as_a_finding():
+    findings = _findings([GOOD_ENTRY, ANCHOR_ENTRY])
+    report = build_report_html(findings)
+    assert findings["policy"]["overall_verdict"] == "PASS"
+    assert "OVERALL: PASS" in report
+    assert "Not yet traced" in report
+    assert "Seed consumed here (BIP-32 anchor)" in report
+    assert "takes no part in the verdict" in report
+    # not drawn as a verdict card or a sink pill
+    assert 'class="sink-pill"' in report and report.count('class="sink-pill"') == 1
+    assert "Broke at hop" not in report
+
+
+def test_a_report_with_no_untraced_anchor_has_no_such_section():
+    assert "Not yet traced" not in build_report_html(_findings([FAIL_ENTRY, UNKNOWN_ENTRY]))

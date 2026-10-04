@@ -136,6 +136,60 @@ def test_evaluate_requires_coverage_section():
 # comes from more than one independent source, and the explicit
 # unknown-in-a-mix-is-not-a-pass exception to it.
 
+def _anchor(status="UNKNOWN", category=None):
+    return {
+        "sink_name": "s_hdnode_from_master",
+        "entropy_critical": True,
+        "mechanism": "structural_anchor",
+        "status": status,
+        **({"terminal_category": category} if category else {}),
+    }
+
+
+def _seed(category="HW_TRNG"):
+    return {
+        "sink_name": "generate_seed",
+        "entropy_critical": True,
+        "mechanism": "catalogue",
+        "status": "CLASSIFIED",
+        "terminal_category": category,
+    }
+
+
+def test_an_untraced_anchor_takes_no_part_in_the_verdict():
+    """The anchor finds where a seed is consumed and can never resolve today;
+    it must not hold a clean generating sink at WARN, in either mode."""
+    for mode in ("pr", "audit"):
+        result = evaluate(_findings_with_coverage([_anchor(), _seed("HW_TRNG")]), mode=mode)
+        assert [v["sink_name"] for v in result["verdicts"]] == ["generate_seed"]
+        assert result["overall_verdict"] == "PASS", mode
+
+
+def test_an_untraced_anchor_does_not_hide_a_failing_sink():
+    result = evaluate(_findings_with_coverage([_anchor(), _seed("NON_CRYPTO_PRNG")]), mode="pr")
+    assert result["overall_verdict"] == "FAIL"
+
+
+def test_a_result_whose_only_sink_is_an_untraced_anchor_is_never_a_pass():
+    """Nothing was evaluated, which is not the same as nothing being wrong."""
+    findings = _findings_with_coverage([_anchor()])
+    assert evaluate(findings, mode="pr")["overall_verdict"] == "WARN"
+    assert evaluate(findings, mode="audit")["overall_verdict"] == "FAIL"
+    assert evaluate(findings, mode="pr")["verdicts"] == []
+
+
+def test_an_anchor_that_does_resolve_is_an_ordinary_sink():
+    result = evaluate(_findings_with_coverage([_anchor("CLASSIFIED", "NON_CRYPTO_PRNG")]), mode="pr")
+    assert result["verdicts"][0]["sink_name"] == "s_hdnode_from_master"
+    assert result["overall_verdict"] == "FAIL"
+
+
+def test_a_catalogue_sink_that_is_unknown_still_warns():
+    entry = {**_seed(), "status": "UNKNOWN"}
+    entry.pop("terminal_category")
+    assert evaluate(_findings_with_coverage([entry]), mode="pr")["overall_verdict"] == "WARN"
+
+
 def test_decide_mix_one_good_rest_unknown_is_warn_not_pass():
     """A real shape: one classified good source, two the walker can't
     follow (never silently green)."""

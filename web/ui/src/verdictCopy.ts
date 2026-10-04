@@ -1,4 +1,4 @@
-import type { CoverageChainEntry, Hop } from './types'
+import type { Contribution, CoverageChainEntry, Hop } from './types'
 
 // The sentence under a sink's chain. Plain statements of where the trace
 // ended and what the tool classified it as: never "secure", "safe" or
@@ -30,12 +30,102 @@ const WEAK: Record<string, { lead: string; accent: string; label: string }> = {
   TIME_SEEDED: { lead: 'comes from', accent: 'the clock.', label: 'a time-seeded generator' },
 }
 
+// A sink the BIP-32 anchor found whose seed the tool could not follow upstream.
+// It marks where a seed is consumed, cannot resolve yet, and takes no part in
+// the verdict.
+export const ANCHOR_LABEL = 'Seed consumed here (BIP-32 anchor)'
+
+export function isUntracedAnchor(entry: CoverageChainEntry): boolean {
+  return entry.mechanism === 'structural_anchor' && entry.status === 'UNKNOWN'
+}
+
+// What a sink is called on screen: the function name, except for an untraced
+// anchor, whose name says nothing about what it is.
+export function sinkLabel(entry: CoverageChainEntry): string {
+  return isUntracedAnchor(entry) ? ANCHOR_LABEL : entry.sink_name
+}
+
+// A source the policy treats as weak, whichever sink it feeds.
+export function isWeak(category: string | undefined): boolean {
+  return !!category && category in WEAK
+}
+
+// What a mix's legs look like to a reader: the dotted path or symbol each
+// started from. Two calls to the same function stay two legs, told apart by
+// the line they were called from.
+export function legLabel(leg: Contribution): string {
+  const ffi = leg.chain.find((h) => h.kind === 'ffi')
+  const line = ffi?.line ?? leg.chain.find((h) => h.kind === 'python_call')?.line
+  return line != null ? `${leg.source_expr} (line ${line})` : leg.source_expr
+}
+
+export function isMix(entry: CoverageChainEntry): boolean {
+  return entry.entropy_shape === 'mix' && (entry.contributions?.length ?? 0) > 0
+}
+
+// A sink fed by several independent sources has no single chain to describe.
+// Say how many were traced, which were not, and why that is never a pass.
+function describeMix(entry: CoverageChainEntry, verdict: Verdict): Copy {
+  const legs = entry.contributions ?? []
+  const subject = entry.sink_category === 'SEED_GENERATION' ? "The seed's randomness" : "This sink's randomness"
+  const sink = `${entry.sink_name}()`
+  const resolved = legs.filter((l) => l.status === 'CLASSIFIED')
+  const open = legs.filter((l) => l.status === 'UNKNOWN')
+  const named = (ls: Contribution[]) => ls.map(legLabel).join(', ')
+  const what = (l: Contribution) => {
+    const c = l.terminal_category ?? ''
+    return `${l.source_expr} ends at ${(SOURCE[c] ?? WEAK[c])?.label ?? c}`
+  }
+
+  if (open.length) {
+    // Independent sources combined by a hash or XOR are as hard to guess as the
+    // strongest one, so a traced strong source is not weakened by the others.
+    // The verdict stays unresolved because the tool could not check every input.
+    const strongTraced = resolved.some((l) => (l.terminal_category ?? '') in SOURCE)
+    return {
+      pill: verdict,
+      tone: 'unknown',
+      lead: `${subject} mixes ${legs.length} sources.`,
+      accent: `${resolved.length} of ${legs.length} could be traced.`,
+      detail:
+        `${sink} combines ${legs.length} independent sources. ` +
+        (resolved.length ? `${resolved.map(what).join('; ')}. ` : '') +
+        `Could not follow: ${named(open)}. ` +
+        (strongTraced
+          ? `Sources mixed this way are as hard to guess as the strongest one, so the others do not weaken it. ` +
+            `It stays unresolved because the tool could not check every input, not because they are weak.`
+          : `Nothing traced so far is strong enough to rely on, and the rest could not be checked.`),
+      terminal: null,
+    }
+  }
+  const weakest = resolved.some((l) => isWeak(l.terminal_category))
+  return {
+    pill: verdict,
+    tone: verdict === 'FAIL' ? 'bad' : 'good',
+    lead: `${subject} mixes ${legs.length} sources.`,
+    accent: weakest ? 'Not all of them are strong.' : 'All of them were traced.',
+    detail: `${sink} combines ${legs.length} independent sources. ${resolved.map(what).join('; ')}.`,
+    terminal: null,
+  }
+}
+
 export function describe(entry: CoverageChainEntry, verdict: Verdict | null): Copy {
   const subject = entry.sink_category === 'SEED_GENERATION' ? "The seed's randomness" : "This sink's randomness"
   const chain = entry.chain ?? []
   const last = chain.length ? chain[chain.length - 1] : null
   const where = last ? `${last.symbol}${last.file ? ` (${last.file}${last.line != null ? `:${last.line}` : ''})` : ''}` : ''
   const sink = `${entry.sink_name}()`
+
+  if (isUntracedAnchor(entry)) {
+    return {
+      pill: 'NOT YET TRACED',
+      tone: 'none',
+      lead: 'A seed enters key derivation here.',
+      accent: "Where it comes from isn't traced yet.",
+      detail: `${sink} was found by the BIP-32 anchor. It takes no part in the verdict until the seed can be followed upstream.`,
+      terminal: last,
+    }
+  }
 
   if (verdict === null) {
     return {
@@ -47,6 +137,8 @@ export function describe(entry: CoverageChainEntry, verdict: Verdict | null): Co
       terminal: last,
     }
   }
+
+  if (isMix(entry)) return describeMix(entry, verdict)
 
   if (entry.status === 'UNKNOWN') {
     return {

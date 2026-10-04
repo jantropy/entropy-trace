@@ -23,9 +23,14 @@ import html
 import json
 import os
 
+from entropytrace.analysis.policy import is_untraced_anchor
+
 # Bad/forbidden terminal outcomes vs. accepted ones - used only to decide
 # which colour a terminal badge gets.
 _BAD_CATEGORIES = {"NON_CRYPTO_PRNG", "CONSTANT", "TIME_SEEDED"}
+
+# How an anchor sink that could not be traced is named wherever it is shown.
+ANCHOR_LABEL = "Seed consumed here (BIP-32 anchor)"
 
 _WHY_THIS_MATTERS: dict[str, str] = {
     "NON_CRYPTO_PRNG": (
@@ -773,9 +778,31 @@ def build_report_html(findings: dict) -> str:
     else:
         unknown_html = ""
 
+    # Anchor sinks the tool could not trace take no part in the verdict, so the
+    # cards above leave them out; they are listed here so they are never silent.
+    untraced = [e for e in coverage["chains"] if e.get("entropy_critical") and is_untraced_anchor(e)]
+    if untraced:
+        items = "".join(
+            f"""
+<div class="item">
+  <h3>{_e(ANCHOR_LABEL)} <span class="mono" style="color:var(--dim); font-weight:400; font-size:12px;">{_e(e["sink_name"])} ({_e(e.get("file"))}:{_e(e.get("line"))})</span></h3>
+  <div class="unknown-reason">{_e(e.get("unknown_reason") or "no reason recorded")}</div>
+</div>
+"""
+            for e in untraced
+        )
+        untraced_html = (
+            '<div class="section"><h2>Not yet traced</h2>'
+            '<p style="color:var(--dim); max-width:560px; margin:8px 0 0">A seed enters key derivation here. '
+            "Where it comes from isn't traced yet, so this takes no part in the verdict above.</p>"
+            f'<div class="unknown-list" style="margin-top:20px">{items}</div></div>'
+        )
+    else:
+        untraced_html = ""
+
     config_values_html = _config_values_html(findings)
 
-    body = banner_html + coverage_html + findings_html + unknown_html + config_values_html
+    body = banner_html + coverage_html + findings_html + unknown_html + untraced_html + config_values_html
 
     footer = f"""
 <footer>

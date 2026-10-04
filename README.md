@@ -21,7 +21,7 @@ two: the same function at two commits.
 | Project and ref | Result | Report |
 |---|---|---|
 | Coldcard, vulnerable tag `2026-07-01T1730-v5.5.1` | FAIL, `generate_seed` resolves to a non-crypto PRNG | [report](docs/reports/coldcard-vulnerable.html) |
-| Coldcard, patched | WARN, resolves to the hardware TRNG (the one UNKNOWN is the BIP-32 anchor) | [report](docs/reports/coldcard-patched.html) |
+| Coldcard, patched | PASS, `generate_seed` resolves to the hardware TRNG (the BIP-32 anchor is listed as not yet traced and takes no part in the verdict) | [report](docs/reports/coldcard-patched.html) |
 | Trust Wallet Core 3.1.0 | FAIL | [report](docs/reports/trustwallet-vulnerable.html) |
 | Trust Wallet Core 3.1.1 | WARN | [report](docs/reports/trustwallet-patched.html) |
 | libsodium 1.0.20 | PASS | [report](docs/reports/libsodium.html) |
@@ -116,6 +116,13 @@ spot in a real wallet codebase. Only one anchor is implemented: BIP-32's
 any code for it. A second candidate (BIP-39's salt prefix) was checked the same
 way and never actually appears in production source, so it isn't implemented at
 all rather than faked.
+
+The anchor finds where a seed is *consumed* (the key-derivation step), not where
+one is generated, and following what flows into it upstream is not implemented. An
+anchor sink therefore always ends UNKNOWN today. It is reported as "not yet
+traced" and takes no part in the verdict, so only sinks that generate entropy
+decide PASS, WARN or FAIL. A result whose only sink is such an anchor is never a
+PASS.
 
 **6. The Python/C boundary:** _the seed call is Python; the bug is in C. How do
 you cross that?_  

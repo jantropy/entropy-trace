@@ -5,8 +5,8 @@ import RunPanel from './RunPanel'
 import SavedResults from './SavedResults'
 import { loadSavedRuns, saveRun, titleFor } from './savedRuns'
 import type { SavedRun } from './savedRuns'
-import type { CoverageChainEntry, Findings, FindingsSummary, Hop, PolicyVerdict, Sysroot } from './types'
-import { describe } from './verdictCopy'
+import type { Contribution, CoverageChainEntry, Findings, FindingsSummary, Hop, PolicyVerdict, Sysroot } from './types'
+import { describe, isMix, isUntracedAnchor, isWeak, legLabel, sinkLabel } from './verdictCopy'
 import type { Tone, Verdict } from './verdictCopy'
 
 const VERDICT_TEXT: Record<Verdict, string> = {
@@ -63,6 +63,7 @@ function SysrootLine({ sysroot }: { sysroot: Sysroot | undefined }) {
 function ResultHeader({ findings, viewing }: { findings: Findings; viewing: string | null }) {
   const overall = findings.policy.overall_verdict
   const commit = findings.build_profile.commit
+  const notTraced = findings.coverage.chains.filter(isUntracedAnchor)
   return (
     <section className="mt-12">
       <div className="flex flex-wrap items-center gap-3">
@@ -78,6 +79,12 @@ function ResultHeader({ findings, viewing }: { findings: Findings; viewing: stri
           {findings.policy.mode}
         </div>
         <SysrootLine sysroot={findings.build_profile.sysroot} />
+        {notTraced.length > 0 && (
+          <div>
+            {notTraced.length} {notTraced.length === 1 ? 'sink' : 'sinks'} not yet traced and not counted in the verdict:{' '}
+            {notTraced.map((e) => sinkLabel(e)).join(', ')}
+          </div>
+        )}
       </div>
     </section>
   )
@@ -102,6 +109,12 @@ const TILE_HELP: Record<Tile, string> = {
   unknown:
     "The tool couldn't follow these to the end. It says where it stopped and why instead of guessing. Unknown isn't a failure; it is an honest \"don't know\".",
   resolved: 'Closed chains divided by sinks found. It measures how much of the code the tool could account for, not how good the results are.',
+}
+
+// How many of a mix's independent sources could not be followed. A sink counts
+// as closed once its head source is classified, so this says what that hides.
+function untraced(entry: CoverageChainEntry): number {
+  return isMix(entry) ? (entry.contributions ?? []).filter((l) => l.status === 'UNKNOWN').length : 0
 }
 
 function chipDot(entry: CoverageChainEntry, verdicts: PolicyVerdict[]): string {
@@ -198,7 +211,13 @@ function CoverageSection({
                   className="inline-flex items-center gap-2 rounded-lg border border-line bg-bg px-3 py-1.5 font-mono text-sm hover:border-line-strong"
                 >
                   <span className={`h-2 w-2 rounded-full ${chipDot(c, findings.policy.verdicts)}`} />
-                  {c.sink_name} <span className="text-dim">&rarr;</span>
+                  {sinkLabel(c)}
+                  {untraced(c) > 0 && (
+                    <span className="text-[11px] text-amber">
+                      {untraced(c)} of {c.contributions?.length} sources untraced
+                    </span>
+                  )}{' '}
+                  <span className="text-dim">&rarr;</span>
                 </button>
               ))}
             </div>
@@ -208,7 +227,7 @@ function CoverageSection({
               <div key={c.sink_name} className="mt-4 font-mono text-xs leading-relaxed text-dim">
                 {c.broke_at_hop && (
                   <>
-                    <span className="text-bone">{c.sink_name}</span> stopped at <span className="text-bone">{c.broke_at_hop}</span>.{' '}
+                    <span className="text-bone">{sinkLabel(c)}</span> stopped at <span className="text-bone">{c.broke_at_hop}</span>.{' '}
                   </>
                 )}
                 <span className="whitespace-pre-wrap">{c.unknown_reason}</span>
@@ -248,8 +267,11 @@ function SinkPills({
               }`}
             >
               <span className={`h-2 w-2 rounded-full ${v ? VERDICT_DOT[v] : 'bg-dim'}`} />
-              {entry.sink_name}
-              <span className={`text-[11px] ${v ? VERDICT_TEXT[v] : 'text-dim'}`}>{v ?? 'n/a'}</span>
+              {sinkLabel(entry)}
+              {isMix(entry) && <span className="text-[11px] text-dim">mix of {entry.contributions?.length}</span>}
+              <span className={`text-[11px] ${v ? VERDICT_TEXT[v] : 'text-dim'}`}>
+                {v ?? (isUntracedAnchor(entry) ? 'not traced' : 'n/a')}
+              </span>
             </button>
           )
         })}
@@ -295,79 +317,156 @@ function Where({ hop }: { hop: Hop }) {
   )
 }
 
+// One chain, top to bottom: each hop, then either the terminal it reached or the
+// dashed "the trace stops here" row. Used for a sink's own chain and, for a mix,
+// once per independent source.
+function ChainRows({
+  chain,
+  classified,
+  terminalCategory,
+  brokeAt,
+  bad,
+}: {
+  chain: Hop[]
+  classified: boolean
+  terminalCategory?: string
+  brokeAt?: string
+  bad: boolean
+}) {
+  const terminalIndex = classified ? chain.length - 1 : -1
+
+  return (
+    <ol className={`border-b border-line ${STEP}`}>
+      {chain.map((hop, i) => {
+        const isTerminal = i === terminalIndex
+        const indent = { paddingLeft: `calc(var(--step) * ${i})` }
+        if (isTerminal) {
+          return (
+            <li
+              key={hop.index}
+              className={`my-2 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl px-0 py-4 ${
+                bad ? 'bg-tomato-deep' : 'border border-mint/30 bg-surface'
+              }`}
+            >
+              <span className="w-8 pl-3 font-mono text-[11px] text-dim sm:w-10">{String(i + 1).padStart(2, '0')}</span>
+              <span
+                className={`min-w-0 flex-[1_1_9rem] font-mono text-[17px] [overflow-wrap:anywhere] ${bad ? 'text-tomato-soft' : 'text-mint'}`}
+                style={indent}
+              >
+                {hop.symbol}
+              </span>
+              <span className="flex items-center gap-3 pr-3">
+                <Where hop={hop} />
+                <span
+                  className={`rounded-md px-2.5 py-1 font-mono text-[11px] font-bold tracking-wide text-bg ${
+                    bad ? 'bg-tomato' : 'bg-mint'
+                  }`}
+                >
+                  TERMINAL &middot; {terminalCategory}
+                </span>
+              </span>
+            </li>
+          )
+        }
+        return (
+          <li key={hop.index} className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-line py-4">
+            <span className="w-8 font-mono text-[11px] text-dim sm:w-10">{String(i + 1).padStart(2, '0')}</span>
+            <span className="min-w-0 flex-[1_1_9rem]" style={indent}>
+              <span className="font-mono text-[17px] [overflow-wrap:anywhere]">{hop.symbol}</span>
+              {hop.detail && hop.kind !== 'c_call' && (
+                <span className="mt-0.5 block font-mono text-[11px] text-dim">{hop.detail}</span>
+              )}
+            </span>
+            <span className="flex items-center gap-3">
+              <Where hop={hop} />
+              <HopTag hop={hop} />
+            </span>
+          </li>
+        )
+      })}
+
+      {!classified && (
+        <li className="my-2 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-dashed border-line-strong py-4">
+          <span className="w-8 pl-3 font-mono text-[11px] text-dim sm:w-10">{String(chain.length + 1).padStart(2, '0')}</span>
+          <span className="min-w-0 flex-[1_1_9rem] font-mono text-[17px] text-dim [overflow-wrap:anywhere]" style={{ paddingLeft: `calc(var(--step) * ${chain.length})` }}>
+            {brokeAt ?? 'unknown'}
+          </span>
+          <span className="pr-3 font-mono text-[11px] text-dim">UNKNOWN &middot; the trace stops here</span>
+        </li>
+      )}
+    </ol>
+  )
+}
+
+// A mix has no single chain: each independent source is traced on its own, so
+// each gets its own labelled chain and its own ending.
+function MixLeg({ leg }: { leg: Contribution }) {
+  const classified = leg.status === 'CLASSIFIED'
+  const weak = classified && isWeak(leg.terminal_category)
+  const last = leg.chain[leg.chain.length - 1]
+  return (
+    <div className="mt-8 first:mt-0">
+      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <span className="font-mono text-sm">
+          <span className="text-dim">source </span>
+          {legLabel(leg)}
+        </span>
+        <span
+          className={`font-mono text-[11px] ${classified ? (weak ? 'text-tomato-soft' : 'text-mint') : 'text-dim'}`}
+        >
+          {classified ? leg.terminal_category : 'UNKNOWN'}
+        </span>
+      </div>
+      <ChainRows
+        chain={leg.chain}
+        classified={classified}
+        terminalCategory={leg.terminal_category}
+        brokeAt={last?.symbol}
+        bad={weak}
+      />
+      {!classified && leg.unknown_reason && (
+        <pre className="mt-3 max-h-32 overflow-auto whitespace-pre-wrap rounded-xl border border-dashed border-line-strong p-3 font-mono text-[11px] leading-relaxed text-dim">
+          {leg.unknown_reason}
+        </pre>
+      )}
+    </div>
+  )
+}
+
 function ChainSection({ findings, entry }: { findings: Findings; entry: CoverageChainEntry }) {
-  const chain = entry.chain ?? []
   const classified = entry.status === 'CLASSIFIED'
   const verdict = verdictFor(findings.policy.verdicts, entry.sink_name)
-  const bad = classified && verdict === 'FAIL'
-  const terminalIndex = classified ? chain.length - 1 : -1
+  const legs = entry.contributions ?? []
 
   return (
     <section className="mt-14">
       <div className="mb-4 flex items-baseline justify-between gap-4">
-        <h2 className="text-2xl font-bold tracking-[-0.03em]">Following the randomness down</h2>
+        <h2 className="text-2xl font-bold tracking-[-0.03em]">
+          {isUntracedAnchor(entry) ? 'Where the seed enters' : 'Following the randomness down'}
+        </h2>
         <span className="font-mono text-xs text-dim">{entry.sink_name}</span>
       </div>
 
-      <ol className={`border-b border-line ${STEP}`}>
-        {chain.map((hop, i) => {
-          const isTerminal = i === terminalIndex
-          const indent = { paddingLeft: `calc(var(--step) * ${i})` }
-          if (isTerminal) {
-            return (
-              <li
-                key={hop.index}
-                className={`my-2 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl px-0 py-4 ${
-                  bad ? 'bg-tomato-deep' : 'border border-mint/30 bg-surface'
-                }`}
-              >
-                <span className="w-8 pl-3 font-mono text-[11px] text-dim sm:w-10">{String(i + 1).padStart(2, '0')}</span>
-                <span
-                  className={`min-w-0 flex-[1_1_9rem] font-mono text-[17px] [overflow-wrap:anywhere] ${bad ? 'text-tomato-soft' : 'text-mint'}`}
-                  style={indent}
-                >
-                  {hop.symbol}
-                </span>
-                <span className="flex items-center gap-3 pr-3">
-                  <Where hop={hop} />
-                  <span
-                    className={`rounded-md px-2.5 py-1 font-mono text-[11px] font-bold tracking-wide text-bg ${
-                      bad ? 'bg-tomato' : 'bg-mint'
-                    }`}
-                  >
-                    TERMINAL &middot; {entry.terminal_category}
-                  </span>
-                </span>
-              </li>
-            )
-          }
-          return (
-            <li key={hop.index} className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-line py-4">
-              <span className="w-8 font-mono text-[11px] text-dim sm:w-10">{String(i + 1).padStart(2, '0')}</span>
-              <span className="min-w-0 flex-[1_1_9rem]" style={indent}>
-                <span className="font-mono text-[17px] [overflow-wrap:anywhere]">{hop.symbol}</span>
-                {hop.detail && hop.kind !== 'c_call' && (
-                  <span className="mt-0.5 block font-mono text-[11px] text-dim">{hop.detail}</span>
-                )}
-              </span>
-              <span className="flex items-center gap-3">
-                <Where hop={hop} />
-                <HopTag hop={hop} />
-              </span>
-            </li>
-          )
-        })}
-
-        {!classified && (
-          <li className="my-2 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-dashed border-line-strong py-4">
-            <span className="w-8 pl-3 font-mono text-[11px] text-dim sm:w-10">{String(chain.length + 1).padStart(2, '0')}</span>
-            <span className="min-w-0 flex-[1_1_9rem] font-mono text-[17px] text-dim [overflow-wrap:anywhere]" style={{ paddingLeft: `calc(var(--step) * ${chain.length})` }}>
-              {entry.broke_at_hop ?? 'unknown'}
-            </span>
-            <span className="pr-3 font-mono text-[11px] text-dim">UNKNOWN &middot; the trace stops here</span>
-          </li>
-        )}
-      </ol>
+      {isMix(entry) ? (
+        <>
+          <p className="mb-5 max-w-2xl text-sm leading-relaxed text-dim">
+            Mix of {legs.length} independent sources. Each is traced on its own. The result is at least as strong as its
+            best traced source; it stays unresolved while any source could not be followed, because the tool cannot
+            vouch for what it could not see.
+          </p>
+          {legs.map((leg, i) => (
+            <MixLeg key={i} leg={leg} />
+          ))}
+        </>
+      ) : (
+        <ChainRows
+          chain={entry.chain ?? []}
+          classified={classified}
+          terminalCategory={entry.terminal_category}
+          brokeAt={entry.broke_at_hop}
+          bad={classified && verdict === 'FAIL'}
+        />
+      )}
     </section>
   )
 }
@@ -391,7 +490,7 @@ function VerdictSection({ findings, entry }: { findings: Findings; entry: Covera
   return (
     <section className="mt-14 grid gap-10 md:grid-cols-[1fr_auto] md:items-start">
       <div>
-        {verdict ? <Pill verdict={verdict}>{copy.pill}</Pill> : <span className="font-mono text-xs text-dim">N/A</span>}
+        {verdict ? <Pill verdict={verdict}>{copy.pill}</Pill> : <span className="font-mono text-xs text-dim">{copy.pill}</span>}
         <h2 className="mt-5 text-4xl font-extrabold leading-[1.02] tracking-[-0.045em] sm:text-5xl">
           {copy.lead}
           {copy.accent && (
@@ -409,7 +508,7 @@ function VerdictSection({ findings, entry }: { findings: Findings; entry: Covera
         )}
       </div>
 
-      {entry.entropy_critical && (
+      {entry.entropy_critical && !isUntracedAnchor(entry) && (
         <div>
           <div className="flex gap-4">
             <Illustration look="noise" tone="neutral" caption={needs} />

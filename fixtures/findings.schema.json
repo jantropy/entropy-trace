@@ -264,7 +264,7 @@
         "mode": {"type": "string", "enum": ["pr", "audit"]},
         "verdicts": {
           "type": "array",
-          "description": "One entry per entropy_critical sink in `coverage.chains` -- sinks with entropy_critical=false are never evaluated and do not appear here.",
+          "description": "One entry per entropy_critical sink in `coverage.chains` -- sinks with entropy_critical=false are never evaluated and do not appear here. Neither does a sink found by the BIP-32 structural anchor whose chain could not be traced (mechanism=structural_anchor, status=UNKNOWN): it marks where a seed is consumed, cannot resolve yet, and takes no part in the verdict. If every sink found is such an anchor, overall_verdict is that of a bare UNKNOWN (WARN in pr mode, FAIL in audit mode), never PASS.",
           "items": {
             "type": "object",
             "required": ["sink_name", "status", "verdict"],

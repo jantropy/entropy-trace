@@ -71,22 +71,22 @@ def test_policy_section_present_and_matches_terminals():
     reflects the worst of every entropy-critical sink in coverage -- the
     vulnerable tree's NON_CRYPTO_PRNG terminal must FAIL even though the
     tree also has an honest UNKNOWN sink that alone would only WARN; the
-    patched tree's HW_TRNG terminal is held to WARN (not PASS) by that
-    same UNKNOWN sink, which is exactly the point of computing an overall
-    verdict from every sink in coverage rather than just the headline
-    one."""
+    patched tree's HW_TRNG terminal passes, because the other sink is the
+    BIP-32 anchor, which finds where a seed is consumed and takes no part in
+    the verdict until it can be traced."""
     vuln = _load("findings-vulnerable.json")
     patched = _load("findings-patched.json")
     assert vuln["schema_version"] == "1.3.0"
     assert patched["schema_version"] == "1.3.0"
     assert vuln["policy"]["mode"] == "pr"
     assert vuln["policy"]["overall_verdict"] == "FAIL"
-    assert patched["policy"]["overall_verdict"] == "WARN"
+    assert patched["policy"]["overall_verdict"] == "PASS"
     vuln_by_name = {v["sink_name"]: v for v in vuln["policy"]["verdicts"]}
     patched_by_name = {v["sink_name"]: v for v in patched["policy"]["verdicts"]}
     assert vuln_by_name["generate_seed"]["verdict"] == "FAIL"
     assert patched_by_name["generate_seed"]["verdict"] == "PASS"
-    assert vuln_by_name["s_hdnode_from_master"]["verdict"] == "WARN"
+    assert "s_hdnode_from_master" not in vuln_by_name  # reported as not yet traced, not as a verdict
+    assert "s_hdnode_from_master" not in patched_by_name
 
 
 def test_coverage_chains_carry_a_hop_chain():
