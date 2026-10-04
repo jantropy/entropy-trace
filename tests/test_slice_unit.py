@@ -235,9 +235,9 @@ def _fake_resolve_ffi_path(edges: dict[str, FFIEdge]):
 def test_slice_from_sink_real_shaped_mix_one_classified_two_unknown(monkeypatch, tmp_path):
     """The exact shape of a real mix: three sources, one resolves and
     classifies, two don't resolve over FFI at all (a plain Python wrapper,
-    not a MicroPython C module). Verdict must be WARN (a good contributor
-    plus unknown ones is not a silent pass), and all three contributions
-    must be reported."""
+    not a MicroPython C module). The verdict is PASS in pr mode (the good
+    contributor is enough on its own; the untraced ones become a note), and
+    all three contributions must be reported."""
     py_file, build_set = _synthetic_mix_setup(
         tmp_path, {"good": "ngu.random.bytes", "a": "callgate.read_rng", "b": "callgate.read_rng"}
     )
@@ -266,7 +266,7 @@ def test_slice_from_sink_real_shaped_mix_one_classified_two_unknown(monkeypatch,
         [(c.status, c.classification.category.value if c.classification else None) for c in result.contributions],
         mode="pr",
     )
-    assert verdict == Verdict.WARN
+    assert verdict == Verdict.PASS
 
 
 def test_slice_from_sink_mix_all_weak_still_fails(monkeypatch, tmp_path):
@@ -324,9 +324,9 @@ def test_slice_from_sink_mix_one_good_one_weak_passes_both_reported(monkeypatch,
 
 
 def test_slice_from_sink_mix_one_good_one_unknown(monkeypatch, tmp_path):
-    """Good-plus-UNKNOWN's chosen policy: WARN in pr mode (never a silent
-    pass), FAIL in audit mode - same treatment a bare UNKNOWN result
-    already gets, generalised to a mix."""
+    """Good-plus-UNKNOWN's chosen policy: PASS in pr mode (the untraced source
+    is reported as a note on the verdict), FAIL in audit mode (the strictest
+    reading, as a bare UNKNOWN result gets)."""
     py_file, build_set = _synthetic_mix_setup(tmp_path, {"good": "pkg.good_one", "mystery": "pkg.mystery"})
     idx = build_symbol_index(build_set, str(tmp_path / "stub"))
     monkeypatch.setattr(
@@ -346,7 +346,7 @@ def test_slice_from_sink_mix_one_good_one_unknown(monkeypatch, tmp_path):
 
     from entropytrace.analysis.policy import Verdict, decide_mix
     contribs = [(c.status, c.classification.category.value if c.classification else None) for c in result.contributions]
-    assert decide_mix(contribs, mode="pr") == Verdict.WARN
+    assert decide_mix(contribs, mode="pr") == Verdict.PASS
     assert decide_mix(contribs, mode="audit") == Verdict.FAIL
 
 

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { getFindings, listFindings } from './api'
 import Illustration from './Illustration'
+import MixTree from './MixTree'
+import { shortPath } from './paths'
 import RunPanel from './RunPanel'
 import SavedResults from './SavedResults'
 import { loadSavedRuns, saveRun, titleFor } from './savedRuns'
@@ -79,6 +81,11 @@ function ResultHeader({ findings, viewing }: { findings: Findings; viewing: stri
           {findings.policy.mode}
         </div>
         <SysrootLine sysroot={findings.build_profile.sysroot} />
+        {findings.policy.verdicts.flatMap((v) => (v.notes ?? []).map((n) => [v.sink_name, n] as const)).map(([sink, note]) => (
+          <div key={`${sink}-${note}`} className="text-amber">
+            caveat, {sink}: {note}
+          </div>
+        ))}
         {notTraced.length > 0 && (
           <div>
             {notTraced.length} {notTraced.length === 1 ? 'sink' : 'sinks'} not yet traced and not counted in the verdict:{' '}
@@ -268,7 +275,12 @@ function SinkPills({
             >
               <span className={`h-2 w-2 rounded-full ${v ? VERDICT_DOT[v] : 'bg-dim'}`} />
               {sinkLabel(entry)}
-              {isMix(entry) && <span className="text-[11px] text-dim">mix of {entry.contributions?.length}</span>}
+              {isMix(entry) && (
+                <span className="text-[11px] text-dim">
+                  mix of {entry.contributions?.length}
+                  {untraced(entry) > 0 && <span className="text-amber"> &middot; {untraced(entry)} untraced</span>}
+                </span>
+              )}
               <span className={`text-[11px] ${v ? VERDICT_TEXT[v] : 'text-dim'}`}>
                 {v ?? (isUntracedAnchor(entry) ? 'not traced' : 'n/a')}
               </span>
@@ -297,13 +309,6 @@ function HopTag({ hop }: { hop: Hop }) {
   if (hop.kind === 'ffi') return <span className="font-mono text-[11px] text-dim">crosses into C</span>
   if (verdict) return <span className="font-mono text-[11px] text-amber">{verdict.toLowerCase()}</span>
   return null
-}
-
-// The last two path segments are what a reader needs; the full path is in the
-// tooltip.
-function shortPath(file: string): string {
-  const parts = file.split('/')
-  return parts.length > 2 ? parts.slice(-2).join('/') : file
 }
 
 function Where({ hop }: { hop: Hop }) {
@@ -434,6 +439,7 @@ function MixLeg({ leg }: { leg: Contribution }) {
 }
 
 function ChainSection({ findings, entry }: { findings: Findings; entry: CoverageChainEntry }) {
+  const [view, setView] = useState<'tree' | 'list'>('tree')
   const classified = entry.status === 'CLASSIFIED'
   const verdict = verdictFor(findings.policy.verdicts, entry.sink_name)
   const legs = entry.contributions ?? []
@@ -449,14 +455,31 @@ function ChainSection({ findings, entry }: { findings: Findings; entry: Coverage
 
       {isMix(entry) ? (
         <>
+          <div className="mb-4 flex justify-end">
+            <div className="flex overflow-hidden rounded-lg border border-line-strong font-mono text-[11px]" role="group" aria-label="View">
+              {(['tree', 'list'] as const).map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  aria-pressed={view === v}
+                  onClick={() => setView(v)}
+                  className={`px-3 py-1.5 ${view === v ? 'bg-bone font-bold text-bg' : 'text-dim hover:text-bone'}`}
+                >
+                  {v}
+                </button>
+              ))}
+            </div>
+          </div>
           <p className="mb-5 max-w-2xl text-sm leading-relaxed text-dim">
             Mix of {legs.length} independent sources. Each is traced on its own. The result is at least as strong as its
-            best traced source; it stays unresolved while any source could not be followed, because the tool cannot
-            vouch for what it could not see.
+            best traced source. Any source that could not be followed is listed as a caveat on the verdict, because the
+            tool cannot vouch for what it could not see.
           </p>
-          {legs.map((leg, i) => (
-            <MixLeg key={i} leg={leg} />
-          ))}
+          {view === 'tree' ? (
+            <MixTree entry={entry} />
+          ) : (
+            legs.map((leg, i) => <MixLeg key={i} leg={leg} />)
+          )}
         </>
       ) : (
         <ChainRows

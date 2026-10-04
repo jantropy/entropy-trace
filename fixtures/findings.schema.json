@@ -210,6 +210,11 @@
             "required": ["sink_name", "sink_category", "entropy_critical", "mechanism", "file", "line", "status"],
             "properties": {
               "sink_name": {"type": "string"},
+              "notes": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Caveats that travel with this verdict: for a mix, the sources that could not be traced (a mix with a traced good source and untraced others passes in pr mode, and says so here). Absent when there is nothing to say. Additive."
+              },
               "sink_category": {"type": "string"},
               "entropy_critical": {"type": "boolean"},
               "mechanism": {"type": "string", "enum": ["catalogue", "structural_anchor"]},

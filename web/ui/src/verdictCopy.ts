@@ -80,8 +80,23 @@ function describeMix(entry: CoverageChainEntry, verdict: Verdict): Copy {
   if (open.length) {
     // Independent sources combined by a hash or XOR are as hard to guess as the
     // strongest one, so a traced strong source is not weakened by the others.
-    // The verdict stays unresolved because the tool could not check every input.
-    const strongTraced = resolved.some((l) => (l.terminal_category ?? '') in SOURCE)
+    // In pr mode that passes, with a caveat; the verdict is whatever the policy
+    // said, and the wording follows it.
+    const strong = resolved.find((l) => (l.terminal_category ?? '') in SOURCE)
+    const strongTraced = !!strong
+    if (verdict === 'PASS' && strong) {
+      return {
+        pill: verdict,
+        tone: 'good',
+        lead: `${subject} mixes ${legs.length} sources.`,
+        accent: `One is ${SOURCE[strong.terminal_category ?? ''].label}.`,
+        detail:
+          `${sink} combines ${legs.length} independent sources. ${resolved.map(what).join('; ')}. ` +
+          `Could not follow: ${named(open)}. Sources mixed this way are as hard to guess as the strongest one, ` +
+          `so the others do not weaken it. Passed with a caveat: the tool could not check every input.`,
+        terminal: null,
+      }
+    }
     return {
       pill: verdict,
       tone: 'unknown',
@@ -93,7 +108,7 @@ function describeMix(entry: CoverageChainEntry, verdict: Verdict): Copy {
         `Could not follow: ${named(open)}. ` +
         (strongTraced
           ? `Sources mixed this way are as hard to guess as the strongest one, so the others do not weaken it. ` +
-            `It stays unresolved because the tool could not check every input, not because they are weak.`
+            `This mode still counts an unchecked input against the result, not because they are weak.`
           : `Nothing traced so far is strong enough to rely on, and the rest could not be checked.`),
       terminal: null,
     }

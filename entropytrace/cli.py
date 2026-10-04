@@ -350,6 +350,7 @@ def write_step_summary(findings: dict, path: str) -> None:
         "",
     ]
     verdict_by_name = {v["sink_name"]: v["verdict"] for v in policy["verdicts"]}
+    notes_by_name = {v["sink_name"]: v.get("notes") or [] for v in policy["verdicts"]}
     for entry in cov["chains"]:
         verdict = verdict_by_name.get(
             entry["sink_name"],
@@ -360,6 +361,8 @@ def write_step_summary(findings: dict, path: str) -> None:
         terminal = entry.get("terminal_category", entry.get("unknown_reason", "UNKNOWN"))
         chain_str = " -> ".join(h["symbol"] for h in entry.get("chain", [])) or "(no hops traced)"
         lines.append(f"- **{entry['sink_name']}** ({entry['file']}:{entry['line']}) -- {verdict}: {terminal}")
+        for note in notes_by_name.get(entry["sink_name"], []):
+            lines.append(f"  - caveat: {note}")
         lines.append(f"  - chain: {chain_str}")
     with open(path, "a") as f:
         f.write("\n".join(lines) + "\n")

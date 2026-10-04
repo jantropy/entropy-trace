@@ -190,12 +190,19 @@ def test_a_catalogue_sink_that_is_unknown_still_warns():
     assert evaluate(_findings_with_coverage([entry]), mode="pr")["overall_verdict"] == "WARN"
 
 
-def test_decide_mix_one_good_rest_unknown_is_warn_not_pass():
-    """A real shape: one classified good source, two the walker can't
-    follow (never silently green)."""
+def test_decide_mix_one_good_rest_unknown_passes_in_pr_mode_and_fails_in_audit():
+    """A real shape: one classified good source, two the walker can't follow.
+    The good source is enough on its own, so pr mode passes it (with a note,
+    see below); audit mode keeps the strictest reading."""
     contributions = [("CLASSIFIED", "HW_TRNG"), ("UNKNOWN", None), ("UNKNOWN", None)]
-    assert decide_mix(contributions, mode="pr") == Verdict.WARN
+    assert decide_mix(contributions, mode="pr") == Verdict.PASS
     assert decide_mix(contributions, mode="audit") == Verdict.FAIL
+
+
+def test_a_good_source_next_to_an_untraced_one_is_no_longer_judged_worse_than_next_to_a_known_weak_one():
+    good_plus_weak = [("CLASSIFIED", "HW_TRNG"), ("CLASSIFIED", "NON_CRYPTO_PRNG")]
+    good_plus_unknown = [("CLASSIFIED", "HW_TRNG"), ("UNKNOWN", None)]
+    assert decide_mix(good_plus_weak, mode="pr") == decide_mix(good_plus_unknown, mode="pr") == Verdict.PASS
 
 
 def test_decide_mix_all_weak_fails():
@@ -253,8 +260,8 @@ def test_evaluate_dispatches_to_decide_mix_for_a_genuine_mix():
     """evaluate() must call decide_mix (not decide) the moment a chain
     entry has more than one contribution - confirmed via a hand-built
     good+unknown mix that decide() alone (reading only the head status/
-    terminal_category) would score PASS, but decide_mix correctly scores
-    WARN."""
+    terminal_category) would score PASS in any mode, but decide_mix scores
+    FAIL in audit mode."""
     findings = _findings_with_coverage(
         [
             {
@@ -269,9 +276,61 @@ def test_evaluate_dispatches_to_decide_mix_for_a_genuine_mix():
             }
         ]
     )
+    result = evaluate(findings, mode="audit")
+    assert result["verdicts"][0]["verdict"] == "FAIL"
+    assert result["overall_verdict"] == "FAIL"
+
+
+def _mix_findings():
+    def leg(line, status="UNKNOWN", category=None):
+        c = {
+            "source_expr": "callgate.read_rng",
+            "status": status,
+            "chain": [{"kind": "ffi", "symbol": "callgate.read_rng", "line": line}],
+        }
+        if category:
+            c["terminal_category"] = category
+        return c
+
+    return _findings_with_coverage(
+        [
+            {
+                "sink_name": "generate_seed",
+                "entropy_critical": True,
+                "status": "CLASSIFIED",
+                "terminal_category": "HW_TRNG",
+                "entropy_shape": "mix",
+                "contributions": [
+                    {"source_expr": "ngu.random.bytes", "status": "CLASSIFIED", "terminal_category": "HW_TRNG", "chain": []},
+                    leg(650),
+                    leg(651),
+                ],
+            }
+        ]
+    )
+
+
+def test_a_pr_mode_pass_for_a_mix_carries_a_note_naming_what_was_not_traced():
+    result = evaluate(_mix_findings(), mode="pr")
+    assert result["overall_verdict"] == "PASS"
+    assert result["verdicts"][0]["notes"] == [
+        "2 of 3 sources could not be traced: callgate.read_rng (line 650), callgate.read_rng (line 651)"
+    ]
+
+
+def test_a_mix_whose_sources_were_all_traced_has_no_note():
+    findings = _mix_findings()
+    for c in findings["coverage"]["chains"][0]["contributions"][1:]:
+        c.update(status="CLASSIFIED", terminal_category="HW_TRNG")
     result = evaluate(findings, mode="pr")
-    assert result["verdicts"][0]["verdict"] == "WARN"
-    assert result["overall_verdict"] == "WARN"
+    assert "notes" not in result["verdicts"][0]
+
+
+def test_a_single_source_sink_never_has_notes():
+    findings = _findings_with_coverage(
+        [{"sink_name": "g", "entropy_critical": True, "status": "UNKNOWN"}]
+    )
+    assert "notes" not in evaluate(findings, mode="pr")["verdicts"][0]
 
 
 def test_evaluate_single_contribution_list_uses_decide_not_decide_mix():

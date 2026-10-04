@@ -179,13 +179,15 @@ For a sink with more than one independent source, the verdict takes the
 *maximum* of the contributors, not the minimum: a cryptographic transform over
 a mix doesn't create entropy, it only combines what's already there, so one
 genuinely good source is not weakened by a co-located bad one when the two are
-independent. The one exception: an UNKNOWN contributor is never silently
-absorbed into a PASS just because another contributor is good - a good-plus-
-unknown mix gets exactly the same treatment a bare UNKNOWN sink already gets
-(WARN in pr mode, FAIL in audit mode), never a quiet green light.
+independent. An UNKNOWN contributor next to a good one is no different: the
+good source is enough on its own, so in pr mode the sink passes. It is never
+silent, though: the verdict carries a note saying how many sources could not be
+traced and which (a PASS with that caveat), and the UI, the reports, SARIF and
+the CI summary all show it. audit mode keeps the strictest reading and fails it.
 
 **9. The profile:** _what does "analyse this project" actually mean, in one file?_  
-`profiles.py`. A profile YAML says where the checkout lives, how to get its build
+`profiles.py`. A profile says how to analyse a project (never where its checkout
+is; the caller supplies that): how to get its build
 set (plain `make -n`, `scons --dry-run`, `compile_commands.json`, or a named adapter), which target
 macros and sysroot apply, and which sinks to look for beyond the shared catalogue.
 Loading one never silently fills in a missing field - a profile that's missing

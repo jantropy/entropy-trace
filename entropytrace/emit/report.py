@@ -312,6 +312,7 @@ details.explain dd { margin: 4px 0 0; color: rgba(237, 230, 220, 0.85); font-siz
 /* Mix: each independent source is its own labelled chain; a mix has no
    single chain to show. */
 .mix-note { color: var(--dim); font-size: 14px; margin: 4px 0 16px; max-width: 640px; }
+.caveat { color: var(--amber); font-family: var(--mono); font-size: 12px; margin: 10px 0 0; max-width: 640px; }
 .contribution { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); padding: 14px 18px; margin-bottom: 14px; }
 .contribution:last-child { margin-bottom: 0; }
 .contribution-label { font-family: var(--mono); font-size: 11px; color: var(--dim); margin-bottom: 6px; }
@@ -712,9 +713,15 @@ def build_report_html(findings: dict) -> str:
             "</div>"
         )
 
+    caveats = [(v["sink_name"], n) for v in policy["verdicts"] for n in v.get("notes") or []]
+    caveat_html = "".join(
+        f'<div class="caveat">Caveat, {_e(sink)}: {_e(note)}. A good traced source is enough on its own; '
+        "the tool could not check the rest.</div>"
+        for sink, note in caveats
+    )
     banner_html = f"""
 <div class="result">
-  <span class="overall {_verdict_class(overall)}">OVERALL: {_e(overall)}</span>
+  <span class="overall {_verdict_class(overall)}">OVERALL: {_e(overall)}</span>{caveat_html}
   <h1>{_e(label) or "Entropy Trace report"}</h1>
   <div class="meta">
     <div>Repo: <span class="mono">{_e(build_profile.get("repo", "?"))}</span></div>

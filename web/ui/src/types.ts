@@ -63,6 +63,8 @@ export interface Coverage {
 
 export interface PolicyVerdict {
   sink_name: string
+  // Caveats that travel with the verdict (a mix's untraced sources).
+  notes?: string[]
   status: 'CLASSIFIED' | 'UNKNOWN'
   terminal_category: string | null
   verdict: 'PASS' | 'WARN' | 'FAIL'

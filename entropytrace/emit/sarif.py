@@ -197,7 +197,14 @@ def _fingerprint(entry: dict) -> dict:
     return {"entropyTrace/sinkTerminal/v1": key}
 
 
-def _message_for(entry: dict, verdict: str, mode: str) -> str:
+def _message_for(entry: dict, verdict: str, mode: str, notes: list[str] | None = None) -> str:
+    text = _base_message_for(entry, verdict, mode)
+    # A verdict's caveats ride with it: a PASS that rests on a mix with
+    # untraced sources must say so wherever the message is read.
+    return f"{text} Caveat: {'; '.join(notes)}." if notes else text
+
+
+def _base_message_for(entry: dict, verdict: str, mode: str) -> str:
     sink_name = entry["sink_name"]
     # A mix's own contributions - not just the head one - get named
     # directly in the message a reader sees first, since the head
@@ -228,11 +235,11 @@ def _message_for(entry: dict, verdict: str, mode: str) -> str:
     return f"Entropy-critical sink '{sink_name}' resolved to {category} under policy mode '{mode}'."
 
 
-def _result_for(entry: dict, verdict: str, mode: str) -> dict:
+def _result_for(entry: dict, verdict: str, mode: str, notes: list[str] | None = None) -> dict:
     status = entry["status"]
     category = entry.get("terminal_category") if status == "CLASSIFIED" else "UNKNOWN"
     rule_id = _rule_id(category)
-    message_text = _message_for(entry, verdict, mode)
+    message_text = _message_for(entry, verdict, mode, notes)
     # A mix gets one threadFlow per independent contribution in the same
     # codeFlow, rather than the single threadFlow a single-source sink
     # has. entropy_shape is absent on a findings.json from before this
@@ -271,13 +278,14 @@ def build_sarif(findings: dict) -> dict:
     policy = findings["policy"]
     mode = policy["mode"]
     verdict_by_name = {v["sink_name"]: v["verdict"] for v in policy["verdicts"]}
+    notes_by_name = {v["sink_name"]: v.get("notes") or [] for v in policy["verdicts"]}
 
     results = []
     for entry in findings["coverage"]["chains"]:
         verdict = verdict_by_name.get(entry["sink_name"])
         if verdict is None:
             continue  # entropy_critical=False -- never evaluated, never reported
-        results.append(_result_for(entry, verdict, mode))
+        results.append(_result_for(entry, verdict, mode, notes_by_name[entry["sink_name"]]))
 
     sysroot = (findings.get("build_profile") or {}).get("sysroot")
 

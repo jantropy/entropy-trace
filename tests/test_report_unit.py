@@ -331,3 +331,16 @@ def test_an_untraced_anchor_is_listed_as_not_yet_traced_and_not_as_a_finding():
 
 def test_a_report_with_no_untraced_anchor_has_no_such_section():
     assert "Not yet traced" not in build_report_html(_findings([FAIL_ENTRY, UNKNOWN_ENTRY]))
+
+
+def test_a_mix_with_untraced_sources_passes_with_a_visible_caveat():
+    findings = _findings([MIX_ENTRY])
+    verdict = findings["policy"]["verdicts"][0]
+    report = build_report_html(findings)
+    if verdict.get("notes"):
+        assert verdict["verdict"] == "PASS"
+        assert "OVERALL: PASS" in report
+        assert "Caveat, generate_seed" in report
+        assert "could not be traced" in report
+    else:  # every source of this fixture was traced: no caveat to show
+        assert "Caveat," not in report

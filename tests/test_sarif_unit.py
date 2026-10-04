@@ -241,3 +241,13 @@ def test_an_untraced_anchor_gets_no_result_because_it_has_no_verdict():
     anchor = {**UNKNOWN_ENTRY, "mechanism": "structural_anchor"}
     sarif = build_sarif(_findings([anchor]))
     assert sarif["runs"][0]["results"] == []
+
+
+def test_a_verdicts_caveat_is_part_of_the_sarif_message(sarif_schema):
+    mix = {**MIX_ENTRY}
+    findings = _findings([mix])
+    findings["policy"]["verdicts"][0]["notes"] = ["2 of 3 sources could not be traced: callgate.read_rng (line 650), callgate.read_rng (line 651)"]
+    sarif = build_sarif(findings)
+    jsonschema.validate(sarif, sarif_schema)
+    text = sarif["runs"][0]["results"][0]["message"]["text"]
+    assert "Caveat: 2 of 3 sources could not be traced" in text

@@ -108,11 +108,15 @@ def decide_mix(contributions: list[tuple[str, str | None]], mode: str = "pr") ->
        contributors are weak or unknown - independent sources combined
        by XOR/concatenation-then-hash give the maximum of the inputs,
        not the minimum.
-    2. But an unknown contributor is never silently absorbed into a PASS
-       just because another contributor is good - good-plus-unknown gets
-       the same treatment a bare UNKNOWN result already gets: WARN in pr
-       mode, FAIL in audit mode. This is the one case where mode matters
-       for a mix; every other case below is mode-independent.
+    2. An unknown contributor next to a good one does not change the
+       classification (the good source is enough on its own), but it is
+       never silent: in pr mode the sink PASSes and `evaluate` attaches a
+       note saying how many sources could not be traced; in audit mode the
+       strictest reading applies and it gets the same treatment a bare
+       UNKNOWN result gets (FAIL). This is the one case where mode matters
+       for a mix; every other case below is mode-independent. (A good source
+       next to a known-weak one already PASSed; treating "not known" as
+       worse than "known bad" was inconsistent.)
     3. With no good contributor at all, a bad classification wins over an
        unknown one - the mix is definitely weak, not merely unresolved.
     4. With no good and no bad contributor, every source is unknown - the
@@ -136,11 +140,33 @@ def decide_mix(contributions: list[tuple[str, str | None]], mode: str = "pr") ->
     if has_good and not has_unknown:
         return Verdict.PASS
     if has_good and has_unknown:
-        return Verdict.WARN if mode == Mode.PR.value else Verdict.FAIL
+        return Verdict.PASS if mode == Mode.PR.value else Verdict.FAIL
     if has_bad:
         return Verdict.FAIL
     # Only UNKNOWN contributors, no good, no bad.
     return Verdict.WARN if mode == Mode.PR.value else Verdict.FAIL
+
+
+def _leg_name(contribution: dict) -> str:
+    """How a mix's source is named in a note: the dotted path or symbol it
+    started from, plus the line it was called from when that is known, so two
+    calls to the same function stay two sources."""
+    name = contribution.get("source_expr", "a source")
+    for hop in contribution.get("chain") or []:
+        if hop.get("kind") == "ffi" and hop.get("line") is not None:
+            return f"{name} (line {hop['line']})"
+    return name
+
+
+def mix_notes(contributions: list[dict]) -> list[str]:
+    """What a verdict for a mix must not leave unsaid: the sources that could
+    not be traced. Empty when every source was. These ride along with the
+    verdict (a PASS here is a PASS with this caveat), for every consumer."""
+    untraced = [c for c in contributions if c.get("status") != "CLASSIFIED"]
+    if not untraced:
+        return []
+    names = ", ".join(_leg_name(c) for c in untraced)
+    return [f"{len(untraced)} of {len(contributions)} sources could not be traced: {names}"]
 
 
 def is_untraced_anchor(entry: dict) -> bool:
@@ -202,18 +228,21 @@ def evaluate(findings: dict, mode: str = "pr") -> dict:
         # source) - a sink with exactly one contribution (or none
         # recorded, for an older findings.json predating this field)
         # goes through decide() exactly as it always has.
+        notes: list[str] = []
         if len(contributions) > 1:
             v = decide_mix([(c["status"], c.get("terminal_category")) for c in contributions], mode)
+            notes = mix_notes(contributions)
         else:
             v = decide(entry["status"], entry.get("terminal_category"), mode)
-        verdicts.append(
-            {
-                "sink_name": entry["sink_name"],
-                "status": entry["status"],
-                "terminal_category": entry.get("terminal_category"),
-                "verdict": v.value,
-            }
-        )
+        verdict_entry = {
+            "sink_name": entry["sink_name"],
+            "status": entry["status"],
+            "terminal_category": entry.get("terminal_category"),
+            "verdict": v.value,
+        }
+        if notes:
+            verdict_entry["notes"] = notes
+        verdicts.append(verdict_entry)
 
     overall = Verdict.PASS
     if untraced_anchors and not verdicts:
