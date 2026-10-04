@@ -120,6 +120,7 @@ def resolve_for_run(project: Project, ref: str) -> tuple[str, bool, str | None]:
     validate_ref(ref)
     if get_clone_ready(project) is False:
         raise NotReady(f"{project.name} is still being cloned for the first time; try again in a moment")
+    _freshen(project, [ref])
     sha = repo_cache.resolve_ref(project, ref)
     if sha is None:
         repo_cache.fetch(project)
@@ -127,6 +128,14 @@ def resolve_for_run(project: Project, ref: str) -> tuple[str, bool, str | None]:
     if sha is None:
         raise RefRejected(f"{ref!r} does not exist in {project.url}")
     return (sha, *_verified(project, sha))
+
+
+def _freshen(project: Project, names: list[str] | tuple[str, ...]) -> None:
+    """A branch moves, a tag or a commit does not: if any name is a branch,
+    fetch first so the run is of its current tip and not of whatever was cached
+    the last time. Best effort, as every fetch is."""
+    if any(repo_cache.is_branch(project, n) for n in names):
+        repo_cache.fetch(project)
 
 
 def _verified(project: Project, sha: str) -> tuple[bool, str | None]:
@@ -148,6 +157,7 @@ def resolve_url_ref(project: Project, candidates: tuple[str, ...]) -> tuple[str,
             usable.append(validate_ref(cand))
         except InvalidRef:
             continue
+    _freshen(project, usable)
     for attempt in range(2):
         for cand in usable:
             sha = repo_cache.resolve_ref(project, cand)
@@ -156,6 +166,22 @@ def resolve_url_ref(project: Project, candidates: tuple[str, ...]) -> tuple[str,
         if attempt == 0:
             repo_cache.fetch(project)
     raise RefRejected(f"no branch, tag or commit named by that URL exists in {project.url}")
+
+
+def resolve_default(project: Project) -> tuple[str, str, bool, str | None] | None:
+    """What a bare repository URL means: the default branch, at its current tip,
+    as (branch, sha, verified, verified label). None when the default branch
+    cannot be told, in which case the caller offers a choice instead."""
+    if get_clone_ready(project) is False:
+        raise NotReady(f"{project.name} is still being cloned for the first time; try again in a moment")
+    branch = repo_cache.default_branch(project)
+    if branch is None:
+        return None
+    repo_cache.fetch(project)
+    sha = repo_cache.resolve_ref(project, branch)
+    if sha is None:
+        return None
+    return (branch, sha, *_verified(project, sha))
 
 
 def get_clone_ready(project: Project) -> bool:
@@ -246,7 +272,7 @@ def start_run(project: Project, ref: str, sha: str, verified: bool, verified_lab
 def _label_for(project: Project, ref: str, sha: str, verified_label: str | None) -> str:
     if verified_label:
         return verified_label
-    return f"{ref} ({sha[:10]}) - unverified"
+    return f"{ref} ({sha[:10]})"
 
 
 def _execute(job: Job, project: Project) -> None:

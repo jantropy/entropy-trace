@@ -540,10 +540,9 @@ def walk_c_chain(
             return hops, cls, None
 
         if next_defn is None:
-            return hops, None, (
-                f"{symbol!r} (in {tu!r}) matched no registry entry and has no "
-                f"further non-runtime call to follow -- candidates tried: {tried}"
-            )
+            reason = f"{symbol!r} (in {tu!r}) matched no registry entry and has no further non-runtime call to follow"
+            # Naming the candidates only says something when there were some.
+            return hops, None, f"{reason} -- candidates tried: {tried}" if tried else reason
         symbol, tu = next_defn.symbol, next_defn.tu
         visited.add((symbol, tu))
         hops.append(Hop("c_call", symbol, next_defn.file, next_defn.line, detail=next_how))

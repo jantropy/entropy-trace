@@ -60,10 +60,12 @@ and a ref only picks the source tree it is applied to.
 
 - **Which URLs.** `https://github.com/<owner>/<repo>`, optionally followed by
   `/tree/<ref>`, `/commit/<sha>` or `/releases/tag/<tag>`. A URL that names a ref
-  runs straight away; a bare repository URL offers that project's verified refs
-  (and a field for any other ref, marked unverified). The URL is only a lookup
-  key against the allowlist: it is never fetched, and any other host or
-  repository is rejected.
+  runs on it straight away. A bare repository URL runs on the repository's
+  default branch, at its current tip (marked unverified, since a branch moves);
+  once it has started, the project's verified refs and a field for any other ref
+  are offered. A branch is always fetched first, so a run is never of a stale
+  cached tip. The URL is only a lookup key against the allowlist: it is never
+  fetched, and any other host or repository is rejected.
 - **Tiles.** The four coverage tiles are clickable and say what each number
   means, with the sinks behind it and, for unknown ones, where the tool stopped.
 

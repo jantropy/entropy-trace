@@ -231,7 +231,17 @@ def resolve_url(req: ResolveRequest) -> dict:
         "ref": None,
         "verified": None,
         "verified_label": None,
+        # True when the URL named no ref and `ref` is the repository's default branch.
+        "is_default": False,
     }
+    if not pasted.candidates:
+        try:
+            default = runner.resolve_default(project)
+        except runner.NotReady as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        if default is not None:
+            out["ref"], _sha, out["verified"], out["verified_label"] = default
+            out["is_default"] = True
     if pasted.candidates:
         try:
             out["ref"], _sha, out["verified"], out["verified_label"] = runner.resolve_url_ref(

@@ -30,10 +30,12 @@ export interface ResolvedUrl {
   name: string
   url: string
   verified_refs: VerifiedRef[]
-  // The ref the URL named, or null for a bare repository URL.
+  // The ref the URL named. For a bare repository URL it is the default branch
+  // (`is_default`), or null if that cannot be told.
   ref: string | null
   verified: boolean | null
   verified_label: string | null
+  is_default: boolean
 }
 
 export type Stage = 'prepare' | 'build_set' | 'preprocess' | 'sink_location' | 'chain_walk' | 'done'

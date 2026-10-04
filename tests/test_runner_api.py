@@ -96,6 +96,8 @@ def _make_client(tmp_path, fake_remote, monkeypatch, timeout=120):
     (cache / "repos").mkdir(parents=True)
     bare = cache / "repos" / "synthetic.git"
     subprocess.run(["git", "clone", "-q", "--bare", str(fake_remote), str(bare)], check=True, capture_output=True)
+    # as the real cache is configured, so a fetch brings branches up to date
+    subprocess.run(["git", "-C", str(bare), "config", "remote.origin.fetch", "+refs/heads/*:refs/heads/*"], check=True, capture_output=True)
     (bare / "entropytrace-clone-complete").write_text("")
     monkeypatch.setenv("ENTROPY_TRACE_CACHE_DIR", str(cache))
     monkeypatch.setenv("ENTROPY_TRACE_PROJECTS_YAML", _allowlist(tmp_path, timeout))
@@ -195,10 +197,63 @@ def _resolve(client, url):
     return client.post("/api/resolve", json={"url": url})
 
 
-def test_a_bare_repository_url_resolves_to_the_project_and_offers_its_verified_refs(client):
+def _remote_head(fake_remote):
+    return subprocess.run(
+        ["git", "symbolic-ref", "--short", "HEAD"], cwd=fake_remote, capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+
+def test_a_bare_repository_url_means_the_default_branch_and_still_offers_the_verified_refs(client, fake_remote):
     body = _resolve(client, BASE_URL).json()
-    assert body["project"] == "synthetic" and body["ref"] is None
+    assert body["project"] == "synthetic"
+    assert (body["ref"], body["is_default"]) == (_remote_head(fake_remote), True)
+    assert body["verified"] is False  # a branch tip is not a verified ref
     assert body["verified_refs"] == [{"ref": "v-vuln", "label": "vulnerable (synthetic)"}]
+    assert not (client.cache / "worktrees").exists()  # resolving still starts nothing
+
+
+def test_a_url_that_names_a_ref_is_not_the_default_branch(client):
+    body = _resolve(client, f"{BASE_URL}/tree/v-vuln").json()
+    assert body["is_default"] is False
+
+
+def test_the_default_branch_is_remembered_so_an_offline_resolve_still_knows_it(client, fake_remote):
+    first = _resolve(client, BASE_URL).json()["ref"]
+    # the remote goes away: the cache's own origin now points nowhere
+    bare = client.cache / "repos" / "synthetic.git"
+    subprocess.run(["git", "-C", str(bare), "remote", "set-url", "origin", "/nonexistent/remote"], check=True, capture_output=True)
+    assert _resolve(client, BASE_URL).json()["ref"] == first
+
+
+def test_a_run_of_a_branch_is_of_its_current_tip_not_of_what_was_cached(client, fake_remote):
+    branch = _remote_head(fake_remote)
+    before = _resolve(client, BASE_URL).json()
+    assert before["ref"] == branch
+    _commit(fake_remote, {"NOTES.txt": "a later change"}, "later", tag=False)
+    new_tip = subprocess.run(["git", "rev-parse", "HEAD"], cwd=fake_remote, capture_output=True, text=True).stdout.strip()
+    run_id = client.post("/api/runs", json={"project": "synthetic", "ref": branch}).json()["id"]
+    assert client.get(f"/api/runs/{run_id}").json()["resolved_sha"] == new_tip
+    deadline = time.time() + 90  # let the run finish before the cache is torn down
+    while time.time() < deadline and client.get(f"/api/runs/{run_id}").json()["status"] not in ("succeeded", "failed"):
+        time.sleep(0.2)
+
+
+def test_a_tag_is_never_refetched_for_being_a_tag(client, fake_remote):
+    # a ref that is not a branch does not trigger a fetch at all
+    from runner import _freshen
+    import repo_cache as rc
+
+    calls = []
+    original = rc.fetch
+    rc.fetch = lambda *a, **k: calls.append(1) or True
+    try:
+        project = importlib.import_module("main")._projects()["synthetic"]
+        _freshen(project, ["v-vuln"])
+        assert calls == []
+        _freshen(project, [_remote_head(fake_remote)])
+        assert calls == [1]
+    finally:
+        rc.fetch = original
 
 
 def test_a_tree_url_names_the_ref_and_says_whether_it_is_verified(client):
@@ -283,7 +338,8 @@ def test_unverified_ref_that_works_succeeds_with_the_note(client):
     assert "not in our verified set" in snap["outcome"]["message"]
     assert "applied cleanly" in snap["outcome"]["message"]
     assert snap["verdict"] == "PASS"
-    assert "unverified" in client.get(f"/api/runs/{run_id}/findings").json()["label"]
+    label = client.get(f"/api/runs/{run_id}/findings").json()["label"]
+    assert label.startswith("v-patched (") and "unverified" not in label  # which commit, no badge-like suffix
 
 
 # --- unverified ref, failed: one per stage ---------------------------------------

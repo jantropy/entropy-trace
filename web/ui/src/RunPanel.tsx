@@ -58,24 +58,10 @@ function StageStrip({ stage, failedStage, finished }: { stage: Stage; failedStag
   )
 }
 
-function UnverifiedBadge() {
-  return (
-    <span className="mr-2 rounded-md border border-dashed border-dim px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-dim">
-      unverified
-    </span>
-  )
-}
-
+// A run that worked needs no note, whether or not its ref was one we had run
+// before: the result speaks for itself. Only a failure is explained.
 function OutcomeNote({ outcome }: { outcome: RunOutcome }) {
-  if (outcome.kind === 'verified_ok') return null
-  if (outcome.kind === 'unverified_ok') {
-    return (
-      <div className="rounded-xl border border-line bg-surface px-4 py-3 text-sm">
-        <UnverifiedBadge />
-        {outcome.message}
-      </div>
-    )
-  }
+  if (outcome.kind !== 'failed') return null
   const stageName = outcome.stage ? (STAGE_NAMES[outcome.stage] ?? outcome.stage) : 'pipeline'
   return (
     <div className="rounded-xl border border-dashed border-line-strong bg-surface p-5">
@@ -108,7 +94,7 @@ export default function RunPanel({ onResult }: { onResult: (findings: Findings) 
   const [resolving, setResolving] = useState(false)
 
   const [running, setRunning] = useState(false)
-  const [target, setTarget] = useState<{ name: string; ref: string; verified: boolean } | null>(null)
+  const [target, setTarget] = useState<{ name: string; ref: string } | null>(null)
   const [startError, setStartError] = useState<string | null>(null)
   const [snapshot, setSnapshot] = useState<RunSnapshot | null>(null)
   const [logs, setLogs] = useState<string[]>([])
@@ -135,11 +121,11 @@ export default function RunPanel({ onResult }: { onResult: (findings: Findings) 
     setTarget(null)
   }
 
-  const run = async (projectKey: string, name: string, ref: string, verified: boolean) => {
+  const run = async (projectKey: string, name: string, ref: string) => {
     const token = ++runToken.current
     setRunning(true)
     clearRun()
-    setTarget({ name, ref, verified })
+    setTarget({ name, ref })
     let id: string
     try {
       id = (await startRun(projectKey, ref)).id
@@ -194,7 +180,7 @@ export default function RunPanel({ onResult }: { onResult: (findings: Findings) 
       const r = await resolveUrl(text)
       setResolved(r)
       setOtherRef('')
-      if (r.ref) await run(r.project, r.name, r.ref, !!r.verified)
+      if (r.ref) await run(r.project, r.name, r.ref)
     } catch (e) {
       setStartError(String((e as Error).message ?? e))
     } finally {
@@ -276,17 +262,25 @@ export default function RunPanel({ onResult }: { onResult: (findings: Findings) 
         means writing a profile; see the README.
       </p>
 
-      {resolved && !resolved.ref && !busy && !target && (
+      {resolved && !busy && (!resolved.ref ? !target : resolved.is_default && target?.ref === resolved.ref) && (
         <div className="mt-6 rounded-xl border border-line bg-surface p-5">
           <div className="mb-3 text-[15px]">
-            <span className="font-bold">{resolved.name}</span> is supported. Which ref?
+            {resolved.is_default ? (
+              <>
+                Traced the default branch, <span className="font-mono">{resolved.ref}</span>. Try another ref?
+              </>
+            ) : (
+              <>
+                <span className="font-bold">{resolved.name}</span> is supported. Which ref?
+              </>
+            )}
           </div>
           <div className="flex flex-wrap gap-2">
             {resolved.verified_refs.map((r) => (
               <button
                 key={r.ref}
                 className="rounded-lg border border-line bg-bg px-3 py-2 text-left font-mono text-xs hover:border-bone"
-                onClick={() => void run(resolved.project, resolved.name, r.ref, true)}
+                onClick={() => void run(resolved.project, resolved.name, r.ref)}
               >
                 {r.label}
               </button>
@@ -319,8 +313,8 @@ export default function RunPanel({ onResult }: { onResult: (findings: Findings) 
             </button>
           </form>
           <p className="mt-2 text-xs leading-relaxed text-dim">
-            <UnverifiedBadge />A ref that was never run before may fail. If it does, you will be told which stage stopped
-            and what that implies.
+            A ref that was never run before may fail. If it does, you will be told which stage stopped and what that
+            implies.
           </p>
         </div>
       )}
@@ -341,7 +335,6 @@ export default function RunPanel({ onResult }: { onResult: (findings: Findings) 
         <div className="mt-6 space-y-4">
           {target && (
             <div className="text-[15px]">
-              {!target.verified && <UnverifiedBadge />}
               <span className="font-bold">{target.name}</span> <span className="font-mono text-dim">@ {target.ref}</span>
             </div>
           )}

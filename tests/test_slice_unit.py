@@ -140,6 +140,27 @@ def test_walk_c_chain_reports_unknown_when_it_dead_ends():
         assert "entry3" in reason
 
 
+SYNTHETIC_LEAF_C = """
+int lonely(void) { return 7; }
+"""
+
+
+def test_a_dead_end_names_the_candidates_it_tried_only_when_there_were_some():
+    with tempfile.TemporaryDirectory() as tmp:
+        stub = os.path.join(tmp, "stub")
+        calls = _build_set_for(tmp, "dead.c", SYNTHETIC_DEADEND_C)
+        _, _, with_candidates = walk_c_chain(
+            "entry3", "dead.c", "dead.c", 1, calls, build_symbol_index(calls, stub), REGISTRY, stub
+        )
+        leaf = _build_set_for(tmp, "leaf.c", SYNTHETIC_LEAF_C)
+        _, _, without = walk_c_chain(
+            "lonely", "leaf.c", "leaf.c", 1, leaf, build_symbol_index(leaf, stub), REGISTRY, stub
+        )
+    assert "candidates tried: [(" in with_candidates
+    assert without.endswith("has no further non-runtime call to follow")
+    assert "candidates tried" not in without and "[]" not in without
+
+
 # --- Entropy combination: a sink whose entropy comes from more than one
 # independent source, e.g. a real generate_seed() that concatenates an
 # MCU TRNG read with two secure-element reads before hashing. These are

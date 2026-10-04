@@ -143,16 +143,20 @@ export default function MixTree({ entry }: { entry: CoverageChainEntry }) {
   return (
     <div>
       <div className="overflow-x-auto rounded-xl border border-line bg-surface/40 p-2">
-        <svg viewBox={`0 0 ${width} ${height}`} style={{ minWidth: width, width: '100%' }} role="img">
-          <title>{`${entry.sink_name}: a mix of ${legs.length} sources`}</title>
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          style={{ minWidth: width, width: '100%' }}
+          role="img"
+          aria-label={`${entry.sink_name}: a mix of ${legs.length} sources`}
+        >
           <desc>
             {groups
               .map((g) => `${g.legs.map(legLabel).join(' and ')} ${g.status === 'CLASSIFIED' ? `ends at ${g.category}` : 'could not be traced'}`)
               .join('; ')}
           </desc>
           <defs>
-            <marker id="mt-up" viewBox="0 0 10 10" refX="5" refY="2" markerWidth="7" markerHeight="7" orient="auto">
-              <path d="M1 8 L5 2 L9 8" fill="none" stroke={C.dim} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            <marker id="mt-up" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto">
+              <path d="M1 1 L9 5 L1 9 Z" fill={C.dim} />
             </marker>
           </defs>
 
@@ -257,10 +261,9 @@ export default function MixTree({ entry }: { entry: CoverageChainEntry }) {
           })}
         </svg>
       </div>
-      <p className="mt-2 font-mono text-[11px] leading-relaxed text-dim">
-        Arrows point toward the seed: entropy flows up. A dashed outline is a path that could not be traced, never drawn as a
-        failure. Click a folded run to expand it.
-      </p>
+      {groups.some((g) => g.status === 'UNKNOWN') && (
+        <p className="mt-2 font-mono text-[11px] leading-relaxed text-dim">A dashed outline is a path that could not be traced.</p>
+      )}
       {groups
         .filter((g) => g.status === 'UNKNOWN' && g.legs[0].unknown_reason)
         .map((g, i) => (

@@ -156,6 +156,57 @@ def resolve_ref(project: Project, ref: str) -> str | None:
     return sha if code == 0 and re.fullmatch(r"[0-9a-f]{40}", sha) else None
 
 
+_DEFAULT_BRANCH_STAMP = "entropytrace-default-branch"
+
+
+def is_branch(project: Project, ref: str) -> bool:
+    """Whether `ref` names a branch in the cached repository (a tag or a commit
+    never moves; a branch does)."""
+    dest = repo_dir(project.key)
+    if not os.path.isdir(dest):
+        return False
+    code, _ = _git(["-C", dest, "show-ref", "--verify", "--quiet", "--end-of-options", f"refs/heads/{ref}"], timeout=60)
+    return code == 0
+
+
+def default_branch(project: Project, log=_noop) -> str | None:
+    """The repository's default branch (what its bare URL means), or None if it
+    cannot be told. Asked of the remote when it is reachable and remembered in
+    the cache, so an offline run still knows it; failing that, the branch the
+    cached clone's HEAD points at, then `main` or `master`. Only ever a branch
+    that exists in the cache."""
+    dest = repo_dir(project.key)
+    if not os.path.isdir(dest):
+        return None
+    stamp = os.path.join(dest, _DEFAULT_BRANCH_STAMP)
+    branch = None
+    try:
+        code, out = _git(["-C", dest, "ls-remote", "--symref", "origin", "HEAD"], timeout=30, log=None)
+        if code == 0:
+            m = re.search(r"^ref: refs/heads/(\S+)\s+HEAD$", out, re.MULTILINE)
+            if m and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/+-]{0,199}", m.group(1)):
+                branch = m.group(1)
+                with open(stamp, "w") as f:
+                    f.write(branch)
+    except CommandTimeout:
+        log("could not ask the remote for its default branch in time; using what is cached")
+    candidates = [branch] if branch else []
+    if not branch:
+        if os.path.exists(stamp):
+            candidates.append(open(stamp).read().strip())
+        code, out = _git(["-C", dest, "symbolic-ref", "--quiet", "--short", "HEAD"], timeout=60)
+        if code == 0:
+            candidates.append(out.strip())
+        candidates += ["main", "master"]
+    for name in candidates:
+        if name and is_branch(project, name):
+            return name
+    if branch:  # the remote named it but the cache has not fetched it yet
+        fetch(project, log)
+        return branch if is_branch(project, branch) else None
+    return None
+
+
 # --- worktrees and submodules ---------------------------------------------
 
 
