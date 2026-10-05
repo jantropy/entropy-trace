@@ -8,7 +8,7 @@ number generator, the operating system, a library, or something it should never
 be, like a plain predictable generator. Then it tells you PASS, WARN or FAIL, and
 shows the exact chain of functions it followed, so you can check it yourself.
 
-**Demo video:** _\<TODO\>_
+**Demo video:** _https://youtu.be/E5V0OM3yLnY_
 
 ## Why this exists
 
