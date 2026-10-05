@@ -227,12 +227,18 @@ def _base_message_for(entry: dict, verdict: str, mode: str) -> str:
             f"terminal under policy mode '{mode}': {entry.get('unknown_reason') or 'no reason recorded'}"
         )
     category = entry["terminal_category"]
+    # Why it was classified so, when that is text inside the function and not its name.
+    because = (
+        f" Its code contains {entry['matched_entry']}."
+        if entry.get("match_kind") == "body_contains" and entry.get("matched_entry")
+        else ""
+    )
     if verdict == "FAIL":
         return (
             f"Entropy-critical sink '{sink_name}' resolved to {category}, a forbidden "
-            f"source class under policy mode '{mode}'."
+            f"source class under policy mode '{mode}'.{because}"
         )
-    return f"Entropy-critical sink '{sink_name}' resolved to {category} under policy mode '{mode}'."
+    return f"Entropy-critical sink '{sink_name}' resolved to {category} under policy mode '{mode}'.{because}"
 
 
 def _result_for(entry: dict, verdict: str, mode: str, notes: list[str] | None = None) -> dict:

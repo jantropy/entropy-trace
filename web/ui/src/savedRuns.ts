@@ -54,6 +54,14 @@ export function titleFor(repo: string | null | undefined, label: string | null |
   return repo && !label.toLowerCase().includes(repo.toLowerCase()) ? `${repo} \u00b7 ${label}` : label
 }
 
+// The GitHub address a result was made from, or '' when it cannot be told: only a
+// plain owner/repo and a ref without spaces are trusted to make a link.
+export function sourceUrl(findings: Findings): string {
+  const { repo, commit } = findings.build_profile
+  if (!/^[\w.-]+\/[\w.-]+$/.test(repo ?? '') || !/^[^\s/]+$/.test(commit ?? '')) return ''
+  return `https://github.com/${repo}/tree/${commit}`
+}
+
 export function looksLikeResult(doc: unknown): doc is Findings {
   const d = doc as Partial<Findings> | null
   return !!d && typeof d === 'object' && 'schema_version' in d && !!d.coverage && !!d.policy && !!d.build_profile

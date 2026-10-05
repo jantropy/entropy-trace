@@ -90,7 +90,16 @@ function OutcomeNote({ outcome }: { outcome: RunOutcome }) {
   )
 }
 
-export default function RunPanel({ onResult }: { onResult: (findings: Findings) => void }) {
+// `reset` changes whenever the page opens a saved result: whatever is in progress
+// (or left over from the last run) is dropped, and the URL box shows where the
+// opened result came from, or is emptied when that is not known.
+export default function RunPanel({
+  onResult,
+  reset,
+}: {
+  onResult: (findings: Findings) => void
+  reset: { id: number; url: string }
+}) {
   const [projects, setProjects] = useState<ProjectInfo[]>([])
   const [loadError, setLoadError] = useState<string | null>(null)
 
@@ -119,6 +128,20 @@ export default function RunPanel({ onResult }: { onResult: (findings: Findings) 
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
   }, [logs])
 
+  useEffect(() => {
+    if (reset.id === 0) return
+    setUrlText(reset.url)
+    runToken.current += 1 // the polling loop of any run in progress sees this and exits
+    setRunning(false)
+    setResolving(false)
+    setResolved(null)
+    setOtherRef('')
+    setSnapshot(null)
+    setLogs([])
+    setStartError(null)
+    setTarget(null)
+  }, [reset.id])
+
   const clearRun = () => {
     setSnapshot(null)
     setLogs([])
@@ -135,6 +158,7 @@ export default function RunPanel({ onResult }: { onResult: (findings: Findings) 
     try {
       id = (await startRun(projectKey, ref)).id
     } catch (e) {
+      if (token !== runToken.current) return
       setStartError(String((e as Error).message ?? e))
       setRunning(false)
       return
@@ -155,14 +179,18 @@ export default function RunPanel({ onResult }: { onResult: (findings: Findings) 
         if (snap.status === 'succeeded' || snap.status === 'failed') {
           if (snap.status === 'succeeded') {
             try {
-              onResult(await getRunResult(id))
+              const result = await getRunResult(id)
+              if (token !== runToken.current) return
+              onResult(result)
             } catch (e) {
+              if (token !== runToken.current) return
               setStartError(String((e as Error).message ?? e))
             }
           }
           break
         }
       } catch (e) {
+        if (token !== runToken.current) return
         failures += 1
         if (failures >= 5) {
           setStartError(`lost contact with the server: ${String((e as Error).message ?? e)}`)
@@ -253,7 +281,8 @@ export default function RunPanel({ onResult }: { onResult: (findings: Findings) 
                   className="underline decoration-dim/50 underline-offset-2 hover:text-bone disabled:opacity-40"
                   onClick={() => {
                     setUrlText(p.url)
-                    void submit(p.url)
+                    setResolved(null)
+                    setStartError(null)
                   }}
                 >
                   {p.name}

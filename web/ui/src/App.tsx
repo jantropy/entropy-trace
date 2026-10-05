@@ -5,10 +5,10 @@ import MixTree from './MixTree'
 import { shortPath } from './paths'
 import RunPanel from './RunPanel'
 import SavedResults from './SavedResults'
-import { loadSavedRuns, saveRun, titleFor } from './savedRuns'
+import { loadSavedRuns, saveRun, sourceUrl, titleFor } from './savedRuns'
 import type { SavedRun } from './savedRuns'
 import type { Contribution, CoverageChainEntry, Findings, FindingsSummary, Hop, PolicyVerdict, Sysroot } from './types'
-import { describe, isMix, isUntracedAnchor, isWeak, legLabel } from './verdictCopy'
+import { describe, isMix, isUntracedAnchor, isWeak, legLabel, matchNote } from './verdictCopy'
 import type { Tone, Verdict } from './verdictCopy'
 
 const VERDICT_TEXT: Record<Verdict, string> = {
@@ -327,12 +327,14 @@ function ChainRows({
   chain,
   classified,
   terminalCategory,
+  match,
   brokeAt,
   bad,
 }: {
   chain: Hop[]
   classified: boolean
   terminalCategory?: string
+  match?: string
   brokeAt?: string
   bad: boolean
 }) {
@@ -357,6 +359,7 @@ function ChainRows({
                 style={indent}
               >
                 {hop.symbol}
+                {match && <span className="mt-0.5 block font-mono text-[11px] text-dim">{match}</span>}
               </span>
               <span className="flex items-center gap-3 pr-3">
                 <Where hop={hop} />
@@ -424,6 +427,7 @@ function MixLeg({ leg }: { leg: Contribution }) {
         chain={leg.chain}
         classified={classified}
         terminalCategory={leg.terminal_category}
+        match={matchNote(leg)}
         brokeAt={last?.symbol}
         bad={weak}
       />
@@ -484,6 +488,7 @@ function ChainSection({ findings, entry }: { findings: Findings; entry: Coverage
           chain={entry.chain ?? []}
           classified={classified}
           terminalCategory={entry.terminal_category}
+          match={matchNote(entry)}
           brokeAt={entry.broke_at_hop}
           bad={classified && verdict === 'FAIL'}
         />
@@ -556,6 +561,7 @@ export default function App() {
   const [viewing, setViewing] = useState<string | null>(null)
   const [selectedSink, setSelectedSink] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [reset, setReset] = useState({ id: 0, url: '' })
 
   useEffect(() => {
     listFindings()
@@ -570,9 +576,15 @@ export default function App() {
     setError(null)
   }
 
+  // Opening a saved result also ends any run in progress and clears its trace.
+  const showSaved = (f: Findings, label: string) => {
+    setReset((r) => ({ id: r.id + 1, url: sourceUrl(f) }))
+    show(f, label)
+  }
+
   const loadBundled = (name: string) => {
     getFindings(name)
-      .then((f) => show(f, titleFor(f.build_profile.repo, f.label ?? name)))
+      .then((f) => showSaved(f, titleFor(f.build_profile.repo, f.label ?? name)))
       .catch((e) => setError(String(e)))
   }
 
@@ -586,12 +598,13 @@ export default function App() {
           bundled={bundled}
           runs={runs}
           onLoadBundled={loadBundled}
-          onLoadRun={(r) => show(r.findings, r.label)}
-          onAttach={(f, fileName) => show(f, titleFor(f.build_profile.repo, f.label ?? fileName))}
+          onLoadRun={(r) => showSaved(r.findings, r.label)}
+          onAttach={(f, fileName) => showSaved(f, titleFor(f.build_profile.repo, f.label ?? fileName))}
         />
       </header>
 
       <RunPanel
+        reset={reset}
         onResult={(f) => {
           setRuns(saveRun(f))
           show(f, titleFor(f.build_profile.repo, f.label))

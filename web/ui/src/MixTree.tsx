@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { shortPath } from './paths'
 import type { Contribution, CoverageChainEntry, Hop } from './types'
-import { isWeak, legLabel } from './verdictCopy'
+import { isWeak, legLabel, matchNote } from './verdictCopy'
 
 // A sink fed by several independent sources, drawn as a tree: the sink on top,
 // one path per distinct source below it, arrows pointing up because entropy
@@ -34,10 +34,11 @@ interface Group {
   hops: Hop[] // without the sink itself
   status: 'CLASSIFIED' | 'UNKNOWN'
   category?: string
+  match?: string
 }
 
 type Node =
-  | { kind: 'hop'; hop: Hop; terminal: boolean; calls?: number[] }
+  | { kind: 'hop'; hop: Hop; terminal: boolean; match?: string; calls?: number[] }
   | { kind: 'unknown' }
   | { kind: 'fold'; hidden: Hop[]; open: boolean }
 
@@ -51,7 +52,7 @@ function groupLegs(legs: Contribution[]): Group[] {
     const key = [leg.status, leg.terminal_category ?? '', ...hops.map((h) => `${h.kind}:${h.symbol}:${h.file ?? ''}`)].join('>')
     const g = groups.get(key)
     if (g) g.legs.push(leg)
-    else groups.set(key, { legs: [leg], hops, status: leg.status, category: leg.terminal_category })
+    else groups.set(key, { legs: [leg], hops, status: leg.status, category: leg.terminal_category, match: matchNote(leg) })
   }
   return [...groups.values()]
 }
@@ -63,6 +64,7 @@ function nodesFor(group: Group, expanded: boolean): Node[] {
     kind: 'hop' as const,
     hop,
     terminal: classified && i === group.hops.length - 1,
+    match: classified && i === group.hops.length - 1 ? group.match : undefined,
     calls: hop.kind === 'ffi' ? calls : undefined,
   }))
   let nodes: Node[] = hopNodes
@@ -104,10 +106,10 @@ function fit(short: string, long: string, tag: string, room: number): string {
 }
 
 function subtitle(node: Extract<Node, { kind: 'hop' }>, room: number): string {
-  const { hop, calls } = node
+  const { hop, calls, match } = node
   const lines = calls && calls.length ? calls.join(', ') : hop.line != null ? String(hop.line) : ''
   const at = lines ? `:${lines}` : ''
-  const tag = hop.kind === 'ffi' ? 'crosses into C' : hop.resolution_verdict === 'RESOLVED' ? 'resolved' : ''
+  const tag = match || (hop.kind === 'ffi' ? 'crosses into C' : hop.resolution_verdict === 'RESOLVED' ? 'resolved' : '')
   return hop.file ? fit(`${shortPath(hop.file)}${at}`, `${base(hop.file)}${at}`, tag, room) : tag
 }
 

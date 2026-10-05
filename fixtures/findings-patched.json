@@ -188,7 +188,9 @@
             "detail": "local",
             "resolution_verdict": "local"
           }
-        ]
+        ],
+        "matched_entry": "RNG_TypeDef",
+        "match_kind": "body_contains"
       }
     ]
   },

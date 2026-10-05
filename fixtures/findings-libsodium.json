@@ -88,7 +88,9 @@
             "resolution_verdict": "RESOLVED"
           }
         ],
-        "terminal_category": "LIB_CSPRNG"
+        "terminal_category": "LIB_CSPRNG",
+        "matched_entry": "randombytes_buf",
+        "match_kind": "function_name"
       }
     ]
   },

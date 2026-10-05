@@ -31,6 +31,9 @@ export interface Contribution {
   source_expr: string
   status: 'CLASSIFIED' | 'UNKNOWN'
   terminal_category?: string
+  // What the terminal was recognised by: its name, or text found in its body.
+  matched_entry?: string
+  match_kind?: 'function_name' | 'body_contains'
   unknown_reason?: string
   chain: Hop[]
 }
@@ -44,6 +47,8 @@ export interface CoverageChainEntry {
   line: number | null
   status: 'CLASSIFIED' | 'UNKNOWN'
   terminal_category?: string
+  matched_entry?: string
+  match_kind?: 'function_name' | 'body_contains'
   unknown_reason?: string
   broke_at_hop?: string
   chain?: Hop[]

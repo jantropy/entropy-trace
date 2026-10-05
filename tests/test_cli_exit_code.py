@@ -110,3 +110,14 @@ def test_exit_code_for_pure_function_table():
     assert exit_code_for("WARN", "audit") == 1
     assert exit_code_for("PASS", "pr") == 0
     assert exit_code_for("PASS", "audit") == 0
+
+
+def test_a_classified_sink_records_what_it_was_matched_by():
+    """The verdict says what the source is; this says what the tool saw."""
+    findings = _run("case1_csprng_swap/vulnerable/ci-profile.yaml", "pr")
+    entry = findings["coverage"]["chains"][0]
+    assert entry["status"] == "CLASSIFIED"
+    assert entry["match_kind"] in ("function_name", "body_contains") and entry["matched_entry"]
+    for leg in entry["contributions"]:
+        if leg["status"] == "CLASSIFIED":
+            assert leg["matched_entry"] == entry["matched_entry"]

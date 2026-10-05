@@ -116,6 +116,12 @@ function describeMix(entry: CoverageChainEntry, verdict: Verdict): Copy {
   }
 }
 
+// When a terminal was recognised by text inside its body rather than by its
+// name, say what that text was: the name alone ("random3") would not explain it.
+export function matchNote(src: { matched_entry?: string; match_kind?: string }): string {
+  return src.match_kind === 'body_contains' && src.matched_entry ? `contains ${src.matched_entry}` : ''
+}
+
 export function describe(entry: CoverageChainEntry, verdict: Verdict | null): Copy {
   const subject = entry.sink_category === 'SEED_GENERATION' ? "The seed's randomness" : "This sink's randomness"
   const chain = entry.chain ?? []
@@ -176,7 +182,9 @@ export function describe(entry: CoverageChainEntry, verdict: Verdict | null): Co
     tone: 'bad',
     lead: `${subject} ${weak?.lead ?? 'is'}`,
     accent: weak?.accent ?? 'unclassified.',
-    detail: `${sink} ends at ${where}, classified as ${weak?.label ?? category}.`,
+    detail: `${sink} ends at ${where}, classified as ${weak?.label ?? category}${
+      entry.match_kind === 'body_contains' && entry.matched_entry ? `, because its code contains ${entry.matched_entry}` : ''
+    }.`,
     terminal: last,
   }
 }

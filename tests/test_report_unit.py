@@ -344,3 +344,34 @@ def test_a_mix_with_untraced_sources_passes_with_a_visible_caveat():
         assert "could not be traced" in report
     else:  # every source of this fixture was traced: no caveat to show
         assert "Caveat," not in report
+
+
+# --- why a terminal was classified the way it was -----------------------------------
+
+BODY_MATCH_ENTRY = {
+    **FAIL_ENTRY,
+    "sink_name": "random32",
+    "chain": [{"index": 0, "kind": "c_call", "symbol": "random32", "file": "wasm/src/Random.cpp", "line": 14, "detail": "", "resolution_verdict": None}],
+    "terminal_category": "NON_CRYPTO_PRNG",
+    "matched_entry": "mt19937",
+    "match_kind": "body_contains",
+}
+
+
+def test_a_terminal_matched_by_text_in_its_body_says_what_was_found():
+    report = build_report_html(_findings([BODY_MATCH_ENTRY]))
+    assert "contains mt19937" in report  # on the terminal row
+    assert "because its code contains mt19937" in report  # in the sentence under the chain
+
+
+def test_a_terminal_matched_by_its_name_adds_no_because():
+    named = {**BODY_MATCH_ENTRY, "match_kind": "function_name", "matched_entry": "random32"}
+    report = build_report_html(_findings([named]))
+    assert "contains random32" not in report and "because its code" not in report
+
+
+def test_a_mix_leg_matched_by_body_text_says_so_too():
+    leg = {"source_expr": "x.y", "status": "CLASSIFIED", "terminal_category": "NON_CRYPTO_PRNG",
+           "matched_entry": "mt19937", "match_kind": "body_contains", "chain": BODY_MATCH_ENTRY["chain"]}
+    mix = {**MIX_ENTRY, "contributions": [leg]}
+    assert "contains mt19937" in build_report_html(_findings([mix]))

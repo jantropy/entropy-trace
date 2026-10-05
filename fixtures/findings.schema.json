@@ -222,6 +222,8 @@
               "line": {"type": ["integer", "null"]},
               "status": {"type": "string", "enum": ["CLASSIFIED", "UNKNOWN"]},
               "terminal_category": {"type": "string"},
+              "matched_entry": {"type": "string", "description": "The source-list entry that classified this terminal (the `symbol` field of data/sources.yaml or of the profile's own list). Present when status is CLASSIFIED. Additive."},
+              "match_kind": {"type": "string", "enum": ["function_name", "body_contains"], "description": "How it matched: `function_name`, the terminal function's own name is on the list; `body_contains`, text on the list appears in its body (for example a generator named inside it). Additive."},
               "unknown_reason": {"type": "string"},
               "broke_at_hop": {"type": "string"},
               "chain": {
@@ -247,6 +249,8 @@
                     },
                     "status": {"type": "string", "enum": ["CLASSIFIED", "UNKNOWN"]},
                     "terminal_category": {"type": "string"},
+                    "matched_entry": {"type": "string", "description": "As on the sink entry: the source-list entry that classified this contribution's terminal. Additive."},
+                    "match_kind": {"type": "string", "enum": ["function_name", "body_contains"]},
                     "unknown_reason": {"type": "string"},
                     "chain": {
                       "type": "array",

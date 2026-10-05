@@ -282,6 +282,7 @@ details.explain dd { margin: 4px 0 0; color: rgba(237, 230, 220, 0.85); font-siz
 .hop .symbol { font-family: var(--mono); font-size: 17px; }
 .hop .detail { display: block; font-family: var(--mono); font-size: 11px; color: var(--dim); margin-top: 2px; }
 .hop .right { display: flex; align-items: center; gap: 12px; }
+.hop .match { font-family: var(--mono); font-size: 11px; color: var(--dim); }
 .hop .file-line { font-family: var(--mono); font-size: 12px; color: var(--dim); }
 .hop .tag { font-family: var(--mono); font-size: 11px; color: var(--dim); }
 .hop .tag.resolved { color: var(--mint); }
@@ -442,7 +443,16 @@ def _hop_html(hop: dict, i: int) -> str:
     )
 
 
-def _terminal_hop_html(hop: dict | None, i: int, cls: str, label: str, fallback_symbol: str) -> str:
+def _match_note(source: dict) -> str:
+    """What the terminal was recognised by, when that is not already its name:
+    text on the source list that appears inside the function (a generator named
+    in its body). Empty when the function's own name was the match."""
+    if source.get("match_kind") == "body_contains" and source.get("matched_entry"):
+        return f"contains {source['matched_entry']}"
+    return ""
+
+
+def _terminal_hop_html(hop: dict | None, i: int, cls: str, label: str, fallback_symbol: str, note: str = "") -> str:
     symbol = hop["symbol"] if hop else fallback_symbol
     where = _where_html(hop) if hop else ""
     if cls == "unknown":
@@ -452,17 +462,19 @@ def _terminal_hop_html(hop: dict | None, i: int, cls: str, label: str, fallback_
     return (
         f'<li class="hop terminal {cls}"><span class="idx">{i + 1:02d}</span>'
         f'<span class="name" style="{_indent(i)}"><span class="symbol">{_e(symbol)}</span></span>'
-        f'<span class="right">{where}{badge}</span></li>'
+        f'<span class="right">{where}{f"<span class=match>{_e(note)}</span>" if note else ""}{badge}</span></li>'
     )
 
 
-def _chain_html(chain: list[dict], status: str, category: str | None, fallback_symbol: str, broke_at: str | None) -> str:
+def _chain_html(
+    chain: list[dict], status: str, category: str | None, fallback_symbol: str, broke_at: str | None, note: str = ""
+) -> str:
     """The hops as a staircase. A classified chain's last hop is the terminal;
     an unknown one ends in a dashed row saying where the trace stopped."""
     cls = _terminal_class(category, status)
     if status == "CLASSIFIED" and chain:
         rows = [_hop_html(h, i) for i, h in enumerate(chain[:-1])]
-        rows.append(_terminal_hop_html(chain[-1], len(chain) - 1, cls, category or "", fallback_symbol))
+        rows.append(_terminal_hop_html(chain[-1], len(chain) - 1, cls, category or "", fallback_symbol, note))
     else:
         rows = [_hop_html(h, i) for i, h in enumerate(chain)]
         rows.append(_terminal_hop_html(None, len(chain), "unknown", "UNKNOWN", broke_at or fallback_symbol))
@@ -485,7 +497,7 @@ def _contribution_html(contribution: dict) -> str:
     return f"""
 <div class="contribution">
   <div class="contribution-label">source: <span class="mono">{_e(contribution["source_expr"])}</span></div>
-  {_chain_html(chain, status, contribution.get("terminal_category"), contribution["source_expr"], None)}
+  {_chain_html(chain, status, contribution.get("terminal_category"), contribution["source_expr"], None, _match_note(contribution))}
   {reason_html}
 </div>
 """
@@ -526,8 +538,8 @@ def _headline(entry: dict, verdict: str) -> tuple[str, str, str, str]:
             f"{subject} is mixed from",
             f"{count} independent sources.",
             tone,
-            "Each source is traced on its own. The verdict follows the strongest classified one, and a "
-            "source that could not be traced keeps it from a clean pass.",
+            "Each source is traced on its own. The verdict follows the strongest classified one; any "
+            "source that could not be traced is listed as a caveat.",
         )
     if entry["status"] == "UNKNOWN":
         broke = entry.get("broke_at_hop")
@@ -535,11 +547,13 @@ def _headline(entry: dict, verdict: str) -> tuple[str, str, str, str]:
         return "We couldn't follow the randomness", "all the way down.", "unknown", detail
 
     category = entry.get("terminal_category") or ""
+    note = _match_note(entry)
+    because = f", because its code {note}" if note else ""
     if category in _SOURCE_ACCENT:
         accent, label = _SOURCE_ACCENT[category]
-        return f"{subject} comes from", accent, "good", f"{sink} ends at {where}, classified as {label}."
+        return f"{subject} comes from", accent, "good", f"{sink} ends at {where}, classified as {label}{because}."
     lead, accent, label = _WEAK.get(category, ("is", "unclassified.", category))
-    return f"{subject} {lead}", accent, "bad", f"{sink} ends at {where}, classified as {label}."
+    return f"{subject} {lead}", accent, "bad", f"{sink} ends at {where}, classified as {label}{because}."
 
 
 def _noise_svg() -> str:
@@ -634,7 +648,7 @@ def _card_html(entry: dict, verdict: str, mode: str, findings: dict, anchor: str
         chain_html = mix_note + "".join(_contribution_html(c) for c in contributions)
     else:
         chain_html = _chain_html(
-            entry.get("chain") or [], status, category, entry["sink_name"], entry.get("broke_at_hop")
+            entry.get("chain") or [], status, category, entry["sink_name"], entry.get("broke_at_hop"), _match_note(entry)
         )
 
     lead, accent, tone, detail = _headline(entry, verdict)

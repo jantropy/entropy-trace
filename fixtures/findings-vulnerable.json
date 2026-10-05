@@ -188,7 +188,9 @@
             "detail": "local",
             "resolution_verdict": "local"
           }
-        ]
+        ],
+        "matched_entry": "pyb_rng_yasmarang",
+        "match_kind": "function_name"
       }
     ]
   },

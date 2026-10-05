@@ -251,3 +251,11 @@ def test_a_verdicts_caveat_is_part_of_the_sarif_message(sarif_schema):
     jsonschema.validate(sarif, sarif_schema)
     text = sarif["runs"][0]["results"][0]["message"]["text"]
     assert "Caveat: 2 of 3 sources could not be traced" in text
+
+
+def test_the_sarif_message_says_what_the_terminal_was_recognised_by():
+    entry = {**FAIL_ENTRY, "matched_entry": "mt19937", "match_kind": "body_contains"}
+    text = build_sarif(_findings([entry]))["runs"][0]["results"][0]["message"]["text"]
+    assert text.endswith("Its code contains mt19937.")
+    named = {**FAIL_ENTRY, "matched_entry": "rand", "match_kind": "function_name"}
+    assert "Its code contains" not in build_sarif(_findings([named]))["runs"][0]["results"][0]["message"]["text"]

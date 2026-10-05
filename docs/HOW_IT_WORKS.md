@@ -20,7 +20,7 @@ the guard meant to prevent exactly that tested whether the macro was *defined*
 rather than what it was *set to*. Both the vulnerable and the fixed firmware
 compile and link cleanly - no error, no warning, no ambiguous symbol. The only
 difference is which file one function resolves to. Undetected for five years;
-exploited at scale on 30 July 2026, with reported losses of 1,082-1,367 BTC.
+exploited at scale on 30 July 2026, with reported losses of about 1,800 BTC.
 
 #### Trust Wallet Core
 

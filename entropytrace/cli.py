@@ -120,6 +120,15 @@ def _normalize_build_dir_paths(chains: list[dict], sinks: list, build_dir: str) 
                     hop["file"] = _prefix_build_dir(hop.get("file"), build_dir)
 
 
+def _match_fields(classification) -> dict:
+    """Why a terminal was classified the way it was: the source-list entry that
+    matched, and whether it matched by the function's name or by text in its
+    body. Without it a verdict says WHAT the source is but not what was seen."""
+    if not classification:
+        return {}
+    return {"matched_entry": classification.matched_entry, "match_kind": classification.match_kind}
+
+
 def run_profile(
     profile_path: str, repo_root: str, mode: str = "pr", stub_dir: str | None = None, progress=None
 ) -> dict:
@@ -193,6 +202,7 @@ def run_profile(
                     "source_expr": c.source_expr,
                     "status": c.status,
                     **({"terminal_category": c.classification.category.value} if c.classification else {}),
+                    **_match_fields(c.classification),
                     **({"unknown_reason": c.unknown_reason} if c.unknown_reason else {}),
                     "chain": _serialize_chain(c.hops),
                 }
@@ -201,6 +211,7 @@ def run_profile(
         }
         if result.status == "CLASSIFIED":
             entry["terminal_category"] = result.classification.category.value
+            entry.update(_match_fields(result.classification))
         else:
             entry["unknown_reason"] = result.unknown_reason
             entry["broke_at_hop"] = result.hops[-1].symbol if result.hops else sink.entry_symbol

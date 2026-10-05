@@ -131,6 +131,7 @@ details.explain dd { margin: 4px 0 0; color: rgba(237, 230, 220, 0.85); font-siz
 .hop .symbol { font-family: var(--mono); font-size: 17px; }
 .hop .detail { display: block; font-family: var(--mono); font-size: 11px; color: var(--dim); margin-top: 2px; }
 .hop .right { display: flex; align-items: center; gap: 12px; }
+.hop .match { font-family: var(--mono); font-size: 11px; color: var(--dim); }
 .hop .file-line { font-family: var(--mono); font-size: 12px; color: var(--dim); }
 .hop .tag { font-family: var(--mono); font-size: 11px; color: var(--dim); }
 .hop .tag.resolved { color: var(--mint); }
@@ -272,12 +273,12 @@ footer { margin-top: 72px; padding-top: 20px; border-top: 1px solid var(--line);
     <div>Location <span class="v">shared/seed.py:602</span></div>
     <div>Policy mode <span class="v">pr</span> &middot; Confidence <span class="v">high</span></div>
   </div>
-  <ol class="chain" style="list-style:none;margin:0;padding:0"><li class="hop"><span class="idx">01</span><span class="name" style="padding-left: calc(var(--step) * 0)"><span class="symbol">generate_seed</span></span><span class="right"><span class="file-line" title="shared/seed.py:602">shared/seed.py:602</span></span></li><li class="hop"><span class="idx">02</span><span class="name" style="padding-left: calc(var(--step) * 1)"><span class="symbol">ngu.random.bytes</span><span class="detail">-&gt; random_bytes</span></span><span class="right"><span class="file-line" title="shared/seed.py:605">shared/seed.py:605</span><span class="tag">crosses into C</span></span></li><li class="hop"><span class="idx">03</span><span class="name" style="padding-left: calc(var(--step) * 2)"><span class="symbol">random_bytes</span></span><span class="right"><span class="file-line" title="boards/COLDCARD_MK4/c-modules/libngu/random.c:145">libngu/random.c:145</span></span></li><li class="hop"><span class="idx">04</span><span class="name" style="padding-left: calc(var(--step) * 3)"><span class="symbol">my_random_bytes</span></span><span class="right"><span class="file-line" title="boards/COLDCARD_MK4/c-modules/libngu/random.c:68">libngu/random.c:68</span><span class="tag">local</span></span></li><li class="hop"><span class="idx">05</span><span class="name" style="padding-left: calc(var(--step) * 4)"><span class="symbol">rng_get</span></span><span class="right"><span class="file-line" title="boards/COLDCARD_MK4/rng.c:82">COLDCARD_MK4/rng.c:82</span><span class="tag resolved">resolved</span></span></li><li class="hop terminal good"><span class="idx">06</span><span class="name" style="padding-left: calc(var(--step) * 5)"><span class="symbol">rng_get_or_fault</span></span><span class="right"><span class="file-line" title="boards/COLDCARD_MK4/rng.c:61">COLDCARD_MK4/rng.c:61</span><span class="badge">TERMINAL &middot; HW_TRNG</span></span></li></ol>
+  <ol class="chain" style="list-style:none;margin:0;padding:0"><li class="hop"><span class="idx">01</span><span class="name" style="padding-left: calc(var(--step) * 0)"><span class="symbol">generate_seed</span></span><span class="right"><span class="file-line" title="shared/seed.py:602">shared/seed.py:602</span></span></li><li class="hop"><span class="idx">02</span><span class="name" style="padding-left: calc(var(--step) * 1)"><span class="symbol">ngu.random.bytes</span><span class="detail">-&gt; random_bytes</span></span><span class="right"><span class="file-line" title="shared/seed.py:605">shared/seed.py:605</span><span class="tag">crosses into C</span></span></li><li class="hop"><span class="idx">03</span><span class="name" style="padding-left: calc(var(--step) * 2)"><span class="symbol">random_bytes</span></span><span class="right"><span class="file-line" title="boards/COLDCARD_MK4/c-modules/libngu/random.c:145">libngu/random.c:145</span></span></li><li class="hop"><span class="idx">04</span><span class="name" style="padding-left: calc(var(--step) * 3)"><span class="symbol">my_random_bytes</span></span><span class="right"><span class="file-line" title="boards/COLDCARD_MK4/c-modules/libngu/random.c:68">libngu/random.c:68</span><span class="tag">local</span></span></li><li class="hop"><span class="idx">05</span><span class="name" style="padding-left: calc(var(--step) * 4)"><span class="symbol">rng_get</span></span><span class="right"><span class="file-line" title="boards/COLDCARD_MK4/rng.c:82">COLDCARD_MK4/rng.c:82</span><span class="tag resolved">resolved</span></span></li><li class="hop terminal good"><span class="idx">06</span><span class="name" style="padding-left: calc(var(--step) * 5)"><span class="symbol">rng_get_or_fault</span></span><span class="right"><span class="file-line" title="boards/COLDCARD_MK4/rng.c:61">COLDCARD_MK4/rng.c:61</span><span class=match>contains RNG_TypeDef</span><span class="badge">TERMINAL &middot; HW_TRNG</span></span></li></ol>
   <div class="verdict">
     <div>
       <span class="pill v-pass">PASS</span>
       <h2 class="headline">The seed&#x27;s randomness comes from<br><span class="accent good">a hardware RNG.</span></h2>
-      <p class="detail">generate_seed() ends at rng_get_or_fault (boards/COLDCARD_MK4/rng.c:61), classified as a hardware TRNG.</p>
+      <p class="detail">generate_seed() ends at rng_get_or_fault (boards/COLDCARD_MK4/rng.c:61), classified as a hardware TRNG, because its code contains RNG_TypeDef.</p>
       
       <div class="why"><span class="label">Why this matters:</span> A hardware TRNG samples physical noise. This is the strongest class of source this registry recognises for entropy-critical generation.</div>
     </div>
@@ -300,7 +301,7 @@ footer { margin-top: 72px; padding-top: 20px; border-top: 1px solid var(--line);
 </div></div><div class="section"><h2>Build configuration values discovered</h2><div class="kv-row"><span>MICROPY_HW_ENABLE_RNG = 0</span><span class="v">stm32/COLDCARD_MK4/mpconfigboard.h:79</span></div></div>
 
 <footer>
-  Generated 2026-10-05T03:02:42.686525+00:00 by Entropy Trace, schema 1.3.0.
+  Generated 2026-10-05T09:52:28.102581+00:00 by Entropy Trace, schema 1.3.0.
   This report states which entropy source class a sink resolved to under this policy mode, or that it could not
   be determined. It makes no claim about the resulting key material beyond that.
 </footer>
