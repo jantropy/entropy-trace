@@ -652,10 +652,8 @@ def slice_from_sink(
         return _single_source_result(
             sink, sink.entry_symbol, [], "UNKNOWN",
             unknown_reason=(
-                f"{sink.entry_symbol!r} is a formal parameter of {sink.name!r}, "
-                "not a callable entry point - tracing what flows into it requires "
-                "backward interprocedural argument tracing across this function's "
-                "call sites which is not yet implemented"
+                f"{sink.entry_symbol} is an input to {sink.name}, so its randomness comes from "
+                "whoever calls it. Following callers isn't supported yet."
             ),
         )
     if sink.language == "c":

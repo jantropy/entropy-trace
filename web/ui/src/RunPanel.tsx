@@ -25,6 +25,13 @@ function prettyLine(line: string): string {
   const m = line.match(/^entropy-trace: stage=(\w+) phase=(start|done)((?: \w+=\S+)*)\s*$/)
   if (!m) return line
   const name = STAGE_NAMES[m[1]] ?? m[1]
+  if (m[1] === 'preprocess' && m[2] === 'done') {
+    const units = Number(m[3].match(/\bunits=(\d+)/)?.[1])
+    const failed = Number(m[3].match(/\bfailed=(\d+)/)?.[1])
+    if (failed > 0 && units >= failed) {
+      return `  ${name} done: ${units - failed} of ${units} files read; ${failed} skipped (they need files only a full build generates)`
+    }
+  }
   const facts = m[3].trim().replace(/=/g, ' ').replace(/\s+/g, ' ')
   return m[2] === 'start' ? `> ${name}` : `  ${name} done${facts ? ` (${facts})` : ''}`
 }
@@ -85,7 +92,6 @@ function OutcomeNote({ outcome }: { outcome: RunOutcome }) {
 
 export default function RunPanel({ onResult }: { onResult: (findings: Findings) => void }) {
   const [projects, setProjects] = useState<ProjectInfo[]>([])
-  const [verifiedCount, setVerifiedCount] = useState(0)
   const [loadError, setLoadError] = useState<string | null>(null)
 
   const [urlText, setUrlText] = useState('')
@@ -105,7 +111,6 @@ export default function RunPanel({ onResult }: { onResult: (findings: Findings) 
     listProjects()
       .then((p) => {
         setProjects(p.projects)
-        setVerifiedCount(p.verified_count)
       })
       .catch((e) => setLoadError(String(e.message ?? e)))
   }, [])
@@ -255,11 +260,8 @@ export default function RunPanel({ onResult }: { onResult: (findings: Findings) 
                 </button>
               </span>
             ))}
-            <br />
           </>
         )}
-        It picks what to trace and discovers nothing: {verifiedCount} projects have a build profile we wrote. Adding one
-        means writing a profile; see the README.
       </p>
 
       {resolved && !busy && (!resolved.ref ? !target : resolved.is_default && target?.ref === resolved.ref) && (

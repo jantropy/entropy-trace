@@ -120,7 +120,7 @@
         "file": "boards/COLDCARD_MK4/c-modules/libngu/hdnode.c",
         "line": 297,
         "status": "UNKNOWN",
-        "unknown_reason": "'master_secret_in' is a formal parameter of 's_hdnode_from_master', not a callable entry point -- tracing what flows into it requires backward interprocedural argument tracing across this function's call sites, which slice.py does not implement (see this function's docstring)",
+        "unknown_reason": "master_secret_in is an input to s_hdnode_from_master, so its randomness comes from whoever calls it. Following callers isn't supported yet.",
         "broke_at_hop": "master_secret_in",
         "chain": []
       },

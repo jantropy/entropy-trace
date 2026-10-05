@@ -33,16 +33,8 @@ const WEAK: Record<string, { lead: string; accent: string; label: string }> = {
 // A sink the BIP-32 anchor found whose seed the tool could not follow upstream.
 // It marks where a seed is consumed, cannot resolve yet, and takes no part in
 // the verdict.
-export const ANCHOR_LABEL = 'Seed consumed here (BIP-32 anchor)'
-
 export function isUntracedAnchor(entry: CoverageChainEntry): boolean {
   return entry.mechanism === 'structural_anchor' && entry.status === 'UNKNOWN'
-}
-
-// What a sink is called on screen: the function name, except for an untraced
-// anchor, whose name says nothing about what it is.
-export function sinkLabel(entry: CoverageChainEntry): string {
-  return isUntracedAnchor(entry) ? ANCHOR_LABEL : entry.sink_name
 }
 
 // A source the policy treats as weak, whichever sink it feeds.

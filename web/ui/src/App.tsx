@@ -8,7 +8,7 @@ import SavedResults from './SavedResults'
 import { loadSavedRuns, saveRun, titleFor } from './savedRuns'
 import type { SavedRun } from './savedRuns'
 import type { Contribution, CoverageChainEntry, Findings, FindingsSummary, Hop, PolicyVerdict, Sysroot } from './types'
-import { describe, isMix, isUntracedAnchor, isWeak, legLabel, sinkLabel } from './verdictCopy'
+import { describe, isMix, isUntracedAnchor, isWeak, legLabel } from './verdictCopy'
 import type { Tone, Verdict } from './verdictCopy'
 
 const VERDICT_TEXT: Record<Verdict, string> = {
@@ -50,16 +50,15 @@ function Logo() {
 
 // --- what a run was, and what it was run against -----------------------------
 
+// Which ARM headers a cross-compiled project was read against. Nothing is shown
+// when no target sysroot was used (a host build has none to name); the static
+// reports and the result data still record that.
 function SysrootLine({ sysroot }: { sysroot: Sysroot | undefined }) {
-  // Whether a target sysroot was used is a structural fact that must never be
-  // silent. An absent field (an old result file) reads the same as unused.
-  if (sysroot?.used) {
-    const packages = Object.entries(sysroot.resolved_packages ?? {})
-      .map(([k, v]) => `${k} ${v}`)
-      .join(', ')
-    return <div>target sysroot: {packages || 'used'}</div>
-  }
-  return <div className="text-amber">analysed without a target sysroot; system headers resolved against the host.</div>
+  if (!sysroot?.used) return null
+  const packages = Object.entries(sysroot.resolved_packages ?? {})
+    .map(([k, v]) => `${k} ${v}`)
+    .join(', ')
+  return <div>target sysroot: {packages || 'used'}</div>
 }
 
 function ResultHeader({ findings, viewing }: { findings: Findings; viewing: string | null }) {
@@ -77,8 +76,7 @@ function ResultHeader({ findings, viewing }: { findings: Findings; viewing: stri
       </div>
       <div className="mt-2 space-y-0.5 font-mono text-[11px] text-dim">
         <div>
-          {findings.build_profile.repo} &middot; <span title={commit}>{commit.slice(0, 12)}</span> &middot; policy mode{' '}
-          {findings.policy.mode}
+          {findings.build_profile.repo} &middot; <span title={commit}>{commit.slice(0, 12)}</span>
         </div>
         <SysrootLine sysroot={findings.build_profile.sysroot} />
         {findings.policy.verdicts.flatMap((v) => (v.notes ?? []).map((n) => [v.sink_name, n] as const)).map(([sink, note]) => (
@@ -89,7 +87,7 @@ function ResultHeader({ findings, viewing }: { findings: Findings; viewing: stri
         {notTraced.length > 0 && (
           <div>
             {notTraced.length} {notTraced.length === 1 ? 'sink' : 'sinks'} not yet traced and not counted in the verdict:{' '}
-            {notTraced.map((e) => sinkLabel(e)).join(', ')}
+            {notTraced.map((e) => e.sink_name).join(', ')}
           </div>
         )}
       </div>
@@ -218,7 +216,7 @@ function CoverageSection({
                   className="inline-flex items-center gap-2 rounded-lg border border-line bg-bg px-3 py-1.5 font-mono text-sm hover:border-line-strong"
                 >
                   <span className={`h-2 w-2 rounded-full ${chipDot(c, findings.policy.verdicts)}`} />
-                  {sinkLabel(c)}
+                  {c.sink_name}
                   {untraced(c) > 0 && (
                     <span className="text-[11px] text-amber">
                       {untraced(c)} of {c.contributions?.length} sources untraced
@@ -234,7 +232,7 @@ function CoverageSection({
               <div key={c.sink_name} className="mt-4 font-mono text-xs leading-relaxed text-dim">
                 {c.broke_at_hop && (
                   <>
-                    <span className="text-bone">{sinkLabel(c)}</span> stopped at <span className="text-bone">{c.broke_at_hop}</span>.{' '}
+                    <span className="text-bone">{c.sink_name}</span> stopped at <span className="text-bone">{c.broke_at_hop}</span>.{' '}
                   </>
                 )}
                 <span className="whitespace-pre-wrap">{c.unknown_reason}</span>
@@ -274,7 +272,7 @@ function SinkPills({
               }`}
             >
               <span className={`h-2 w-2 rounded-full ${v ? VERDICT_DOT[v] : 'bg-dim'}`} />
-              {sinkLabel(entry)}
+              {entry.sink_name}
               {isMix(entry) && (
                 <span className="text-[11px] text-dim">
                   mix of {entry.contributions?.length}
