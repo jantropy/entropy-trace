@@ -53,3 +53,32 @@ def test_clang_style_output_is_unaffected():
     clang = '# 1 "t.c"\nint f(void) { return 1; }\n# 5 "t.c" 2\nint g(void) { return f(); }\n'
     _, calls = _find_function_node_and_calls(clang, "g")
     assert calls == ["f"]
+
+
+# --- the x86-64 half of the same Linux story ------------------------------------
+
+
+def test_the_host_libc_stub_header_is_written_when_target_macros_replace_the_hosts(tmp_path):
+    """With `-undef` an x86-64 glibc asks for gnu/stubs-32.h, which does not exist
+    there. The stub dir carries an empty one, found through the -I the preprocess
+    command already has."""
+    import os
+
+    from entropytrace.buildset import TranslationUnit
+    from entropytrace.symbols import _rewrite_for_host_preprocess
+
+    tu = TranslationUnit("a.c", "a.o", "-Iinc", False, str(tmp_path))
+    target = os.path.join(os.path.dirname(__file__), "..", "data", "targets", "arm-none-eabi-cortex-m4.yaml")
+    cmd = _rewrite_for_host_preprocess(tu, str(tmp_path), str(tmp_path / "o.i"), target)
+    assert (tmp_path / "gnu" / "stubs-32.h").is_file()
+    assert "-undef" in cmd and f"-I{tmp_path}" in cmd
+
+
+def test_no_stub_is_written_for_a_host_build(tmp_path):
+    from entropytrace.buildset import TranslationUnit
+    from entropytrace.symbols import _rewrite_for_host_preprocess
+
+    tu = TranslationUnit("a.c", "a.o", "", False, str(tmp_path))
+    cmd = _rewrite_for_host_preprocess(tu, str(tmp_path), str(tmp_path / "o.i"), None)
+    assert "-undef" not in cmd
+    assert not (tmp_path / "gnu").exists()

@@ -246,6 +246,27 @@ class SymbolIndex:
     stub_tus: list[str]
 
 
+def ensure_host_libc_stubs(stub_dir: str) -> None:
+    """Give the host's libc the one header it asks for when the host's own
+    architecture macros are gone.
+
+    `-undef` (used so the target's macros replace the host's) also removes
+    `__x86_64__`. On an x86-64 glibc, `<gnu/stubs.h>` then takes its 32-bit branch
+    and includes `gnu/stubs-32.h`, which a 64-bit system does not have, so every
+    file that includes a libc header fails to preprocess. It does not show on an
+    ARM host, where the same header resolves differently, which is why this only
+    surfaced on GitHub's x86-64 runners. The stub is empty: the header only lists
+    which libc functions are unimplemented, and nothing here reads that.
+    """
+    gnu = os.path.join(stub_dir, "gnu")
+    path = os.path.join(gnu, "stubs-32.h")
+    if os.path.exists(path):
+        return
+    os.makedirs(gnu, exist_ok=True)
+    with open(path, "w") as f:
+        f.write("/* stub: entropytrace.symbols.ensure_host_libc_stubs, preprocessing only */\n")
+
+
 def _rewrite_for_host_preprocess(
     tu: TranslationUnit,
     stub_dir: str,
@@ -261,6 +282,7 @@ def _rewrite_for_host_preprocess(
     compiler = "g++" if tu.language == "cpp" else "gcc"
     if target_yaml is not None:
         target_header = ensure_target_macro_header(stub_dir, target_yaml)
+        ensure_host_libc_stubs(stub_dir)
         macro_env = f"-undef -include {target_header} "
         sysroot_env = _sysroot_flags(target_yaml)
     else:
