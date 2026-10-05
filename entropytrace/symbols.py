@@ -298,6 +298,21 @@ def preprocess_tu(
     return text, None
 
 
+def strip_line_markers(text: str) -> str:
+    """The preprocessed text with its `# N "file" ...` marker lines blanked out,
+    ready for the C parser.
+
+    GCC, unlike clang, writes these markers in the middle of an expression when a
+    macro from a system header expands there (`drbg_setup(NULL, 0)` becomes the
+    call split across marker lines). tree-sitter reads a marker as a preprocessor
+    directive, cannot fit one inside an argument list, and drops the whole call, so
+    a chain that goes through it silently loses a hop. Each marker is replaced by
+    spaces of the same length, so line numbers and byte offsets do not move;
+    `_build_line_map` still reads the original text for the real file and line.
+    """
+    return "\n".join(" " * len(line) if _LINE_MARKER_RE.match(line) else line for line in text.split("\n"))
+
+
 def _build_line_map(text: str) -> list[tuple[int, str, int]]:
     """Return [(output_line_idx, true_file, true_line_at_that_marker), ...].
 
@@ -354,7 +369,7 @@ def extract_symbols(
     `language` is "c" (default) or "cpp".
     """
     parser = tree_sitter.Parser(_language_for(language))
-    tree = parser.parse(text.encode("utf-8"))
+    tree = parser.parse(strip_line_markers(text).encode("utf-8"))
     markers = _build_line_map(text)
 
     definitions: list[Definition] = []

@@ -22,8 +22,9 @@ code built, the tests passed, and the output looked random. Three notable events
 - **Trust Wallet Core:** the seed came from a 32-bit generator, so there were only
   about four billion possible wallets. Its output passes the usual randomness
   tests.
-- **Libbitcoin Explorer:** the weak generator was in a helper one repository away
-  from the code under review.
+- **Libbitcoin Explorer:** the weak generator wasn't in the wallet's own code. It was
+  in a library the wallet calls, so reviewing the wallet alone would never have
+  found it.
 
 You can't catch this by reading one file or by testing the output. You have to
 follow where the randomness really comes from, which is what this tool does.

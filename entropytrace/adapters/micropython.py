@@ -45,7 +45,7 @@ import os
 import re
 
 from entropytrace.buildset import TranslationUnit
-from entropytrace.symbols import _build_line_map, _resolve_line, preprocess_tu
+from entropytrace.symbols import _build_line_map, _resolve_line, preprocess_tu, strip_line_markers
 
 try:
     import tree_sitter
@@ -160,7 +160,7 @@ def _collect_declarations(text: str, tu_name: str) -> dict[str, Declaration]:
     if _LANGUAGE is None:
         return {}
     parser = tree_sitter.Parser(_LANGUAGE)
-    tree = parser.parse(text.encode("utf-8"))
+    tree = parser.parse(strip_line_markers(text).encode("utf-8"))
     markers = _build_line_map(text)
     decls: dict[str, Declaration] = {}
 

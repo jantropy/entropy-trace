@@ -38,6 +38,7 @@ from entropytrace.symbols import (
     _build_line_map,
     _resolve_line,
     preprocess_tu,
+    strip_line_markers,
 )
 
 try:
@@ -251,7 +252,7 @@ def find_bip32_master_seed_sink(
         if err is not None or _BIP32_SEED_LITERAL not in text:
             continue
         markers = _build_line_map(text)
-        tree = parser.parse(text.encode("utf-8"))
+        tree = parser.parse(strip_line_markers(text).encode("utf-8"))
 
         def walk(node):
             # Iterative, not recursive - a real C++ TU with deeply nested

@@ -56,6 +56,7 @@ from entropytrace.symbols import (
     _language_for,
     extract_symbols,
     preprocess_tu,
+    strip_line_markers,
 )
 
 try:
@@ -389,6 +390,7 @@ def _find_function_node_and_calls(text: str, func_name: str, language: str = "c"
     if _LANGUAGE is None:
         return None, []
     parser = tree_sitter.Parser(_language_for(language))
+    text = strip_line_markers(text)
     tree = parser.parse(text.encode("utf-8"))
     target = [None]
 
