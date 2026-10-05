@@ -7,7 +7,7 @@ PYTHON ?= $(if $(wildcard $(CURDIR)/../.venv/bin/python),$(CURDIR)/../.venv/bin/
 .PHONY: install dev api ui
 
 install:
-	$(PYTHON) -m pip install -r api/requirements.txt
+	$(PYTHON) -m pip install -r ../requirements.txt -r api/requirements.txt
 	cd ui && npm install
 
 api:

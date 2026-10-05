@@ -9,7 +9,7 @@ contains. If a value is not in the schema, it does not appear on screen.
 
 ```bash
 # terminal 1
-cd web/api && pip install -r requirements.txt && uvicorn main:app --reload --port 8000
+cd web/api && pip install -r ../../requirements.txt -r requirements.txt && uvicorn main:app --reload --port 8000
 
 # terminal 2
 cd web/ui && npm install && npm run dev
